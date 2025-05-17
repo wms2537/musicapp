@@ -141,7 +141,17 @@ alwaysApply: false
       *   Tune WSOLA parameters (frame sizes, overlap, search window) to minimize artifacts (e.g., phasing, choppiness) and achieve the best possible audio quality.
       *   Profile CPU usage to ensure real-time performance is feasible.
       *   Status: In Progress
-      *   Summary: Detailed logs from `wsola_process` show the algorithm is iterating correctly. ALSA underruns persisted even after reducing `DEFAULT_SEARCH_WINDOW_MS` to 5ms. To further optimize, `calculate_normalized_cross_correlation` was changed to `calculate_cross_correlation_numerator`, which uses `long long` integer arithmetic for the sum of products, removing floating-point operations and the square root for normalization. `find_best_match_segment` was updated accordingly to use and return `long long` correlation values. This aims to significantly reduce computational cost.
+      *   Summary: Detailed logs from `wsola_process` show the algorithm is iterating correctly. ALSA underruns persisted even after reducing `DEFAULT_SEARCH_WINDOW_MS` to 5ms. To further optimize, `calculate_normalized_cross_correlation` was changed to `calculate_cross_correlation_numerator`, which uses `long long` integer arithmetic for the sum of products, removing floating-point operations and the square root for normalization. `find_best_match_segment` was updated accordingly to use and return `long long` correlation values. This aims to significantly reduce computational cost. User reported robotic audio with 5ms search window.
+          *Done*
+          *Summary: Increased `DEFAULT_SEARCH_WINDOW_MS` from 5ms to 8ms in `const.h`. The previous reduction to 5ms, aimed at addressing ALSA underruns, resulted in robotic audio output, likely due to an overly constrained search space for optimal segment matching in WSOLA. This change attempts to restore audio quality by providing a larger search window. User reported continued choppy/robotic sound and ALSA underruns with 8ms search window.*
+          *Done*
+          *Summary: Reduced `DEFAULT_ANALYSIS_FRAME_MS` from 30ms to 20ms in `const.h`. This aims to further reduce CPU load by shortening the length of each cross-correlation in `find_best_match_segment`, as ALSA underruns persist. The search window remains 8ms for now. User reported continued choppiness.*
+          *Done*
+          *Summary: Reduced `DEFAULT_SEARCH_WINDOW_MS` from 8ms to 6ms in `const.h`. With 20ms analysis frames, choppiness (likely underruns) continued. This change further reduces the number of cross-correlations to improve performance, aiming for a balance between reducing CPU load and maintaining audio quality (avoiding the robotic sound seen with a 5ms window). User reported continued choppiness.*
+          *Done*
+          *Summary: Reduced `DEFAULT_OVERLAP_PERCENTAGE` from 0.50 to 0.25 in `const.h`. Previous adjustments to analysis frame size (20ms) and search window (6ms) did not resolve choppiness. This change significantly reduces the length of each cross-correlation, further decreasing CPU load, but may impact audio quality by reducing OLA smoothing. User reported less choppiness but distorted audio.*
+          *Done*
+          *Summary: Increased `DEFAULT_OVERLAP_PERCENTAGE` from 0.25 to 0.35 in `const.h`. The previous value of 0.25 reduced choppiness but caused audio distortion. This change is an attempt to improve audio quality by increasing smoothing, while hoping the CPU load remains manageable.*
 
   6.  **Update Documentation (README.md)**:
       *   Reflect that playback speed control now preserves pitch.

@@ -858,49 +858,49 @@ int main(int argc, char *argv[]) {
                 frames_for_alsa = frames_read_this_iteration;
                 if (eq_processed_audio_buffer_s16 != NULL) {
                     buffer_for_alsa = (unsigned char*)eq_processed_audio_buffer_s16;
-                } else {
+        } else {
                     buffer_for_alsa = buff; 
                 }
                 processed_buffer_allocated = false; // No new buffer was allocated for speed change here
             } else { // Simple pitch-changing speed adjustment
-                int target_num_output_samples = (int)round((double)num_source_samples_for_speed_change / current_speed);
+            int target_num_output_samples = (int)round((double)num_source_samples_for_speed_change / current_speed);
                 frames_for_alsa = target_num_output_samples / wav_header.num_channels;
-                if (target_num_output_samples > 0) {
+            if (target_num_output_samples > 0) {
                     size_t resampled_buffer_size_bytes = target_num_output_samples * sizeof(short);
-                    resampled_audio_buffer_s16 = (short *)malloc(resampled_buffer_size_bytes);
-                    if (resampled_audio_buffer_s16 == NULL) {
+                resampled_audio_buffer_s16 = (short *)malloc(resampled_buffer_size_bytes);
+                if (resampled_audio_buffer_s16 == NULL) {
                         app_log("ERROR", "Failed to allocate memory for simple speed-adjusted buffer. Playing normal for this chunk.");
                         buffer_for_alsa = (unsigned char*)source_buffer_for_speed_change_s16;
-                        frames_for_alsa = frames_read_this_iteration;
+                    frames_for_alsa = frames_read_this_iteration;
                         processed_buffer_allocated = false;
-                    } else {
-                        processed_buffer_allocated = true;
-                        double input_sample_cursor = 0.0;
-                        int actual_output_samples_generated = 0;
-                        for (int out_sample_num = 0; out_sample_num < target_num_output_samples; ++out_sample_num) {
-                            int input_sample_to_sample_idx = (int)floor(input_sample_cursor);
-                            if (input_sample_to_sample_idx >= num_source_samples_for_speed_change) {
-                                target_num_output_samples = actual_output_samples_generated;
-                                frames_for_alsa = actual_output_samples_generated / wav_header.num_channels;
-                                break;
-                            }
-                            resampled_audio_buffer_s16[actual_output_samples_generated] = 
-                                source_buffer_for_speed_change_s16[input_sample_to_sample_idx];
-                            actual_output_samples_generated++;
-                            input_sample_cursor += current_speed;
-                        }
-                        frames_for_alsa = actual_output_samples_generated / wav_header.num_channels;
-                        if (frames_for_alsa == 0 && processed_buffer_allocated) { 
-                            free(resampled_audio_buffer_s16);
-                            resampled_audio_buffer_s16 = NULL; 
-                            processed_buffer_allocated = false;
-                            buffer_for_alsa = NULL;
-                        } else if (processed_buffer_allocated) {
-                            buffer_for_alsa = (unsigned char*)resampled_audio_buffer_s16;
-                        }
-                    }
                 } else {
-                    frames_for_alsa = 0;
+                        processed_buffer_allocated = true;
+                    double input_sample_cursor = 0.0;
+                    int actual_output_samples_generated = 0;
+                    for (int out_sample_num = 0; out_sample_num < target_num_output_samples; ++out_sample_num) {
+                        int input_sample_to_sample_idx = (int)floor(input_sample_cursor);
+                        if (input_sample_to_sample_idx >= num_source_samples_for_speed_change) {
+                            target_num_output_samples = actual_output_samples_generated;
+                            frames_for_alsa = actual_output_samples_generated / wav_header.num_channels;
+                            break;
+                        }
+                        resampled_audio_buffer_s16[actual_output_samples_generated] = 
+                            source_buffer_for_speed_change_s16[input_sample_to_sample_idx];
+                        actual_output_samples_generated++;
+                        input_sample_cursor += current_speed;
+                    }
+                        frames_for_alsa = actual_output_samples_generated / wav_header.num_channels;
+                    if (frames_for_alsa == 0 && processed_buffer_allocated) { 
+                        free(resampled_audio_buffer_s16);
+                        resampled_audio_buffer_s16 = NULL; 
+                        processed_buffer_allocated = false;
+                            buffer_for_alsa = NULL;
+                    } else if (processed_buffer_allocated) {
+                        buffer_for_alsa = (unsigned char*)resampled_audio_buffer_s16;
+                    }
+                }
+            } else {
+                frames_for_alsa = 0;
                     buffer_for_alsa = NULL;
                 }
             }
@@ -1428,16 +1428,34 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
 
                 for (int i = 0; i < needed_new_output_samples; ++i) {
                     if (output_samples_written < max_output_samples) {
-                        int source_idx = (int)floor(new_sample_read_cursor);
-                        if (source_idx >= available_new_samples_in_segment) {
-                            source_idx = available_new_samples_in_segment - 1; // Clamp to last available sample
+                        int source_idx_floor = (int)floor(new_sample_read_cursor);
+                        double fraction = new_sample_read_cursor - source_idx_floor;
+
+                        short sample1, sample2;
+
+                        if (source_idx_floor >= available_new_samples_in_segment - 1) {
+                            // At or beyond the second to last sample, or if only one sample available
+                            sample1 = new_part_source[available_new_samples_in_segment - 1];
+                            sample2 = sample1; // No next sample to interpolate with, use last sample
+                        } else {
+                            sample1 = new_part_source[source_idx_floor];
+                            sample2 = new_part_source[source_idx_floor + 1];
                         }
-                        output_buffer[output_samples_written++] = new_part_source[source_idx];
+                        
+                        // Linear interpolation
+                        short interpolated_sample = (short)round((1.0 - fraction) * sample1 + fraction * sample2);
+                        output_buffer[output_samples_written++] = interpolated_sample;
                         samples_written_this_frame_new++;
                         
                         // Advance read cursor: we want to map `needed_new_output_samples` to `available_new_samples_in_segment`
                         // This is equivalent to resampling `available_new_samples_in_segment` to `needed_new_output_samples`
-                        new_sample_read_cursor += (double)available_new_samples_in_segment / (double)needed_new_output_samples;
+                        if (needed_new_output_samples > 0) { // Avoid division by zero if somehow needed_new_output_samples became 0
+                           new_sample_read_cursor += (double)available_new_samples_in_segment / (double)needed_new_output_samples;
+                        } else {
+                            // Should not happen if needed_new_output_samples > 0 is checked before the loop
+                            // but as a safeguard:
+                            new_sample_read_cursor += 1.0; 
+                        }
                     } else {
                         break; // Output buffer full
                     }

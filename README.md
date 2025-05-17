@@ -14,6 +14,7 @@ This is a command-line WAV audio player for Linux using ALSA for playback and vo
 *   Previous track (',' key).
 *   Auto-plays next track in the playlist.
 *   Playback speed selection and control ('[' to decrease, ']' to increase speed between 0.5x, 1.0x, 1.5x, 2.0x).
+    *   Currently uses WSOLA (Waveform Similarity Overlap-Add) for pitch-preserving speed adjustment. This feature is undergoing tuning for optimal audio quality and performance.
 *   Selectable output device (on-board speaker vs external via -d option).
 *   Enhanced logging to console (using `app_log` with timestamps and types) and to `music_app.log` file.
 *   Audio Equalizer ( '1' for Normal, '2' for Bass Boost, '3' for Treble Boost).
@@ -81,9 +82,8 @@ If format or rate are not specified, the program attempts to infer them from the
 *   **Advanced Logging**: While improved, log rotation or more configurable levels could be added.
 *   **Code Structure**: For larger feature sets, refactoring into more functions/modules would be beneficial.
 *   **FIR Filter Coefficients**: The current FIR filter coefficients for Bass Boost and Treble Boost in `const.h` are very basic examples and would need proper design using filter design tools for good audio quality. The current EQ implementation is primarily for S16_LE format audio.
+*   **WSOLA Performance/Quality**: The WSOLA implementation for pitch-preserving speed control is computationally intensive. Further optimization or parameter tuning may be needed to balance audio quality and real-time performance across different systems and speed factors.
 
 ## Troubleshooting
 
-*   **ALSA include errors (`alsa/asoundlib.h` not found):** Ensure `libasound2-dev` (or equivalent for your distribution) is installed and your compiler can find the ALSA headers. You might need to add `-I/usr/include/alsa` (or the correct path for your system) to your CFLAGS if they are in a non-standard location for your compiler.
-*   **No sound / ALSA errors:** Check `music_app.log` for specific ALSA error messages. Ensure the correct sound card and mixer control are being used (`sound_card_name` and `mixer_control_name` in `MusicApp.c`). Try with a known good WAV file and simple parameters first.
-*   **Volume control issues:** The application tries common mixer controls like "PCM" and "Master". If these don't work on your system, you may need to identify the correct mixer control name for your sound card (e.g., using `alsamixer`) and update `mixer_control_name` in `MusicApp.c`.
+*   **ALSA include errors (`alsa/asoundlib.h` not found):** Ensure `
