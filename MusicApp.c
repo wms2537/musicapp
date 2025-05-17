@@ -105,7 +105,7 @@ static int fir_filter_history_idx = 0;    // Index for circular FIR history buff
 WSOLA_State *wsola_state = NULL;
 
 // --- WSOLA Function Prototypes ---
-static void generate_hann_window(float *float_window, int length);
+static void generate_sine_window(float *float_window, int length);
 static void convert_float_window_to_q15(const float* float_window, short* q15_window, int length);
 static float calculate_normalized_cross_correlation(const short *segment1, const short *segment2, int length);
 static bool get_segment_from_ring_buffer(const WSOLA_State *state, int start_index_in_ring, int length, short *output_segment);
@@ -1249,15 +1249,17 @@ static void wsola_add_input_to_ring_buffer(WSOLA_State *state, const short *inpu
     }
 }
 
-// Generates a Hann window: 0.5 * (1 - cos(2*pi*i / (L-1)))
-static void generate_hann_window(float *float_window, int length) {
+// Generates a sine window: sin(pi * i / (L-1))
+static void generate_sine_window(float *float_window, int length) {
     if (length <= 0) return;
-    if (length == 1) { // Avoid division by zero for N-1 if N=1
-        float_window[0] = 1.0f; // Or 0.0f, depending on desired behavior for single point window
+    if (length == 1) { 
+        float_window[0] = 0.0f; // sin(0) = 0. A single point sine window is 0.
+                               // Or 1.0f if we want it to pass signal for L=1. But L=1 is an edge case.
+                               // For WSOLA, N is usually >> 1. Let's stick to sin(0)=0 for consistency.
         return;
     }
     for (int i = 0; i < length; i++) {
-        float_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * (float)i / (float)(length - 1)));
+        float_window[i] = sinf(M_PI * (float)i / (float)(length - 1));
     }
 }
 
@@ -2040,20 +2042,4 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
     // state->total_input_samples_processed = state->next_ideal_input_frame_start_sample_offset; // This is an approximation
 
     return output_samples_written;
-}
-
-// ... existing code ...
-// Renamed back to generate_sine_window (implements sqrt-Hanning for analysis/synthesis frame)
-// Generates a Sine window: sin(pi*i / (L-1))
-static void generate_sine_window(float *float_window, int length) {
-    if (length <= 0) return;
-    if (length == 1) { 
-        float_window[0] = 0.0f; // sin(0) = 0. A single point sine window is 0.
-                               // Or 1.0f if we want it to pass signal for L=1. But L=1 is an edge case.
-                               // For WSOLA, N is usually >> 1. Let's stick to sin(0)=0 for consistency.
-        return;
-    }
-    for (int i = 0; i < length; i++) {
-        float_window[i] = sinf(M_PI * (float)i / (float)(length - 1));
-    }
 }
