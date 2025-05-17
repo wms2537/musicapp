@@ -1222,16 +1222,34 @@ bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_a
     free(temp_float_window);
 
 
-    // Input ring buffer: needs to hold enough for current frame, look-behind for OLA, and look-ahead for search
-    // Minimum capacity: overlap_samples (for previous output tail) + analysis_frame_samples (current natural choice) + search_window_samples (for search).
-    // A more generous size: 2*N + 2*S_w (N=analysis_frame_samples, S_w=search_window_samples) to simplify wrapping logic.
-    // Let's use: N (current frame) + N_o (previous output overlap) + 2*S_w (search range) + some safety margin / input chunk size.
-    // For simplicity, let's make it at least 2 * analysis_frame_samples + 2 * search_window_samples
-    s->input_buffer_capacity = s->analysis_frame_samples + (2 * s->search_window_samples) + s->analysis_frame_samples; // A bit more than N + 2*S_w
-    if (s->input_buffer_capacity < MAX_WSOLA_FRAME_SAMPLES * 2) { // Ensure some reasonable minimum
-        s->input_buffer_capacity = MAX_WSOLA_FRAME_SAMPLES * 2;
-    }
+    // Input ring buffer capacity calculation:
+    // It needs to hold at least one full input chunk from the main app, 
+    // plus enough room for WSOLA to analyze (N samples) and search (2*S_w samples)
+    // from data that might already be there or is part of the new chunk.
+    // A common input chunk size (num_samples_in_buff) is around 12288 for 24KB S16LE mono.
+    // Let's estimate a typical main_input_chunk_size_samples.
+    // const int typical_main_input_chunk_size_samples = (24 * 1024) / 2; // Approx 12288 for S16LE
+    // s->input_buffer_capacity = typical_main_input_chunk_size_samples + s->analysis_frame_samples + (2 * s->search_window_samples) + 2048; // Add some more buffer
+    // Simpler: ensure it's larger than a large input chunk + analysis frame.
+    // From logs, N=661, Sw=220. Typical input is ~12288 samples.
+    // Required for one operation: N (current frame being built) + S_w (search margin).
+    // Data in buffer: must hold enough for current + next + search window.
+    // Let current_input_chunk_size be the samples read by fread = (BUF_LEN * periods) / bytes_per_sample (approx 12k for S16LE)
+    // A robust size would be: typical_input_chunk_from_fread + N + 2*S_w.
+    // For now, let's set a larger fixed minimum based on MAX_WSOLA_FRAME_SAMPLES, and ensure it's larger than typical input chunk.
+    int estimated_max_input_chunk = (1024 * 2 * 20) / 2; // e.g. period_size (12k) * periods (2) / bytes_per_sample -> 12k * 2 / 2 = 12k. Let's assume up to 20k samples as a generous typical chunk.
+                                                        // BUF_LEN is 1024. period_size is 12*1024. buffer_size (for fread) is period_size * periods = 24KB
+    int samples_from_main_fread = (period_size * periods) / (s->sample_rate > 0 ? (wav_header.bits_per_sample / 8) : 2); // Calculate based on actual period_size
+    if (samples_from_main_fread == 0 && s->sample_rate > 0) samples_from_main_fread = (12288 * 2) / (wav_header.bits_per_sample/8); // Fallback if period_size not set yet or similar, assume 12k*2 bytes
+    if (samples_from_main_fread == 0) samples_from_main_fread = 12288; // Default if all else fails
 
+    s->input_buffer_capacity = samples_from_main_fread + s->analysis_frame_samples + (2 * s->search_window_samples) + 1024; // Generous buffer
+    
+    // The old logic using MAX_WSOLA_FRAME_SAMPLES: 
+    // s->input_buffer_capacity = s->analysis_frame_samples + (2 * s->search_window_samples) + s->analysis_frame_samples; 
+    // if (s->input_buffer_capacity < MAX_WSOLA_FRAME_SAMPLES * 2) { 
+    //     s->input_buffer_capacity = MAX_WSOLA_FRAME_SAMPLES * 2;
+    // }
 
     s->input_buffer_ring = (short *)malloc(s->input_buffer_capacity * sizeof(short));
     if (!s->input_buffer_ring) {
