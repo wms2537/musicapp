@@ -1301,18 +1301,19 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
     int H_s_eff = (int)round((double)H_a / state->current_speed_factor);
     if (H_s_eff <= 0) H_s_eff = 1; // Ensure progress even at very high speed factors
 
+    // app_log("DEBUG", "WSOLA_PROCESS_ENTRY: num_input=%d, max_output=%d, current_speed=%.2f, H_s_eff=%d, input_content_start=%d", 
+    //        num_input_samples, max_output_samples, state->current_speed_factor, H_s_eff, state->input_buffer_content);
+
+    int loop_iterations = 0;
     while (output_samples_written + H_s_eff <= max_output_samples) {
+        loop_iterations++;
         // Condition to check if enough data is available in the ring buffer for a full operation:
-        // We need to be able to extract a segment of N samples starting from an ideal point +/- search_window_samples.
-        // The ideal point is 'next_ideal_input_frame_start_sample_offset'.
-        // The latest sample needed for search is roughly 'next_ideal_input_frame_start_sample_offset + N + S_w'.
-        // The earliest sample available in buffer is at 'input_ring_buffer_stream_start_offset + input_buffer_read_pos' (effectively just input_ring_buffer_stream_start_offset for the start of content)
         long long latest_required_stream_offset = state->next_ideal_input_frame_start_sample_offset + N + state->search_window_samples;
         long long latest_available_stream_offset = state->input_ring_buffer_stream_start_offset + state->input_buffer_content;
 
         if (latest_available_stream_offset < latest_required_stream_offset) {
-            // Not enough data in the ring buffer to ensure a safe search and extraction
-            // app_log("DEBUG", "WSOLA: Insufficient data. Available up to %lld, need up to %lld for next frame starting at %lld", latest_available_stream_offset, latest_required_stream_offset, state->next_ideal_input_frame_start_sample_offset);
+            // app_log("DEBUG", "WSOLA_PROCESS_LOOP_BREAK (data): iter=%d, out_written=%d, H_s_eff=%d, max_out=%d. Avail_stream_end=%lld, Req_stream_end=%lld, NextIdealStart=%lld", 
+            //    loop_iterations, output_samples_written, H_s_eff, max_output_samples, latest_available_stream_offset, latest_required_stream_offset, state->next_ideal_input_frame_start_sample_offset);
             break; 
         }
 
@@ -1432,30 +1433,30 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
 
         long long current_ring_start_abs_offset = state->input_ring_buffer_stream_start_offset;
         int samples_to_discard = 0;
-        if (state->input_buffer_content > 0) { // only discard if buffer not empty
+        if (state->input_buffer_content > 0) { 
             samples_to_discard = (int)(min_retainable_abs_offset - current_ring_start_abs_offset);
         }
+        // app_log("DEBUG", "WSOLA_DISCARD_CHECK: iter=%d, min_retain_abs=%lld, ring_start_abs=%lld, content_before=%d, samples_to_discard_calc=%d", 
+        //    loop_iterations, min_retainable_abs_offset, current_ring_start_abs_offset, state->input_buffer_content, samples_to_discard);
 
         if (samples_to_discard > 0) {
             if (samples_to_discard > state->input_buffer_content) {
-                samples_to_discard = state->input_buffer_content; // Cannot discard more than we have
+                app_log("WARNING", "WSOLA_DISCARD: Attempting to discard %d, but only %d content. Clamping.", samples_to_discard, state->input_buffer_content);
+                samples_to_discard = state->input_buffer_content; 
             }
             state->input_buffer_read_pos = (state->input_buffer_read_pos + samples_to_discard) % state->input_buffer_capacity;
             state->input_buffer_content -= samples_to_discard;
             state->input_ring_buffer_stream_start_offset += samples_to_discard;
+            // app_log("DEBUG", "WSOLA_DISCARD_DONE: iter=%d, discarded=%d, new_ring_start_abs=%lld, new_read_pos=%d, new_content=%d", 
+            //    loop_iterations, samples_to_discard, state->input_ring_buffer_stream_start_offset, state->input_buffer_read_pos, state->input_buffer_content);
         } else if (samples_to_discard < 0) {
-            // This implies min_retainable is behind current_ring_start, which is okay, means no discard needed based on this logic.
-            // app_log("DEBUG", "WSOLA: samples_to_discard is negative (%d), no discard needed.", samples_to_discard);
+             // app_log("DEBUG", "WSOLA_DISCARD_SKIP: iter=%d, samples_to_discard_calc was %d (negative).", loop_iterations, samples_to_discard);
         }
-        // Loop break condition for output buffer full is handled by `output_samples_written + H_s_eff <= max_output_samples`
-        // and checks inside the OLA/copy loops. The main loop condition handles this.
     } // End of while loop
 
-    state->total_output_samples_generated += output_samples_written;
-    // total_input_samples_processed is implicitly tracked by next_ideal_input_frame_start_sample_offset for processed *frames*
-    // More accurately, it should reflect the actual latest sample from input that was used or could have been used for search for the last generated frame.
-    // This is complex to track perfectly without knowing exactly which sample was picked by find_best_match.
-    // For now, next_ideal_input_frame_start_sample_offset is a good proxy for input consumed up to the start of the next processing frame.
+    // app_log("DEBUG", "WSOLA_PROCESS_EXIT: loop_iters=%d, output_written=%d, input_content_end=%d, next_ideal_start=%lld", 
+    //    loop_iterations, output_samples_written, state->input_buffer_content, state->next_ideal_input_frame_start_sample_offset);
 
+    state->total_output_samples_generated += output_samples_written;
     return output_samples_written;
 }
