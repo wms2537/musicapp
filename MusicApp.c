@@ -111,6 +111,173 @@ static int fir_filter_history_idx = 0;      // Index for circular FIR history bu
 // --- WSOLA State Global ---
 WSOLA_State *wsola_state = NULL;
 
+// Definition of reconfigure_alsa_for_track
+static bool reconfigure_alsa_for_track() {
+    app_log("INFO", "Reconfiguring ALSA for new track using global wav_header...");
+
+    if (!pcm_handle) {
+        app_log("ERROR", "pcm_handle is NULL during ALSA reconfiguration attempt.");
+        return false;
+    }
+
+    // Drop any pending frames and stop the PCM stream before reconfiguring.
+    // snd_pcm_state_t current_pcm_state = snd_pcm_state(pcm_handle);
+    // app_log("INFO", "PCM state before drop: %s", snd_pcm_state_name(current_pcm_state));
+    if (snd_pcm_drop(pcm_handle) < 0) {
+        app_log("WARNING", "snd_pcm_drop() failed during reconfiguration: %s. Attempting to continue.", snd_strerror(errno));
+        // This might not be fatal if prepare succeeds later.
+    }
+
+    // 1. Update global rate from new wav_header
+    if (wav_header.sample_rate > 0) {
+        rate = wav_header.sample_rate;
+        app_log("INFO", "New track sample rate for ALSA: %u Hz", rate);
+    } else {
+        app_log("ERROR", "New track has invalid sample rate (0) in header. Cannot reconfigure ALSA.");
+        return false;
+    }
+
+    // 2. Update global pcm_format from new wav_header
+    bool format_determined = false;
+    app_log("INFO", "Inferring PCM format for new track (BitsPerSample: %d)...", wav_header.bits_per_sample);
+    switch (wav_header.bits_per_sample) {
+        case 8:
+            pcm_format = SND_PCM_FORMAT_U8;
+            format_determined = true;
+            break;
+        case 16:
+            pcm_format = SND_PCM_FORMAT_S16_LE;
+            format_determined = true;
+            break;
+        case 24:
+            pcm_format = SND_PCM_FORMAT_S24_LE; // Assumes 24-bit data in 3-byte or 4-byte (low-byte aligned) containers
+            format_determined = true;
+            break;
+        case 32:
+            pcm_format = SND_PCM_FORMAT_S32_LE;
+            format_determined = true;
+            break;
+        default:
+            app_log("ERROR", "Unsupported bits_per_sample in new track (%d). Cannot determine PCM format.", wav_header.bits_per_sample);
+            pcm_format = SND_PCM_FORMAT_UNKNOWN;
+            return false;
+    }
+    if (format_determined) {
+        app_log("INFO", "New track inferred PCM format for ALSA: %s", snd_pcm_format_name(pcm_format));
+    }
+
+    snd_pcm_hw_params_t *local_hw_params;
+    int err;
+
+    err = snd_pcm_hw_params_malloc(&local_hw_params);
+    if (err < 0) {
+        app_log("ERROR", "Reconfig: snd_pcm_hw_params_malloc failed: %s", snd_strerror(err));
+        return false;
+    }
+
+    err = snd_pcm_hw_params_any(pcm_handle, local_hw_params);
+    if (err < 0) {
+        app_log("ERROR", "Reconfig: snd_pcm_hw_params_any failed: %s", snd_strerror(err));
+        snd_pcm_hw_params_free(local_hw_params);
+        return false;
+    }
+
+    err = snd_pcm_hw_params_set_access(pcm_handle, local_hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
+    if (err < 0) {
+        app_log("ERROR", "Reconfig: snd_pcm_hw_params_set_access failed: %s", snd_strerror(err));
+        snd_pcm_hw_params_free(local_hw_params);
+        return false;
+    }
+
+    err = snd_pcm_hw_params_set_format(pcm_handle, local_hw_params, pcm_format);
+    if (err < 0) {
+        app_log("ERROR", "Reconfig: snd_pcm_hw_params_set_format (%s) failed: %s", snd_pcm_format_name(pcm_format), snd_strerror(err));
+        snd_pcm_hw_params_free(local_hw_params);
+        return false;
+    }
+
+    unsigned int actual_rate_from_alsa = rate;
+    err = snd_pcm_hw_params_set_rate_near(pcm_handle, local_hw_params, &actual_rate_from_alsa, 0);
+    if (err < 0) {
+        app_log("ERROR", "Reconfig: snd_pcm_hw_params_set_rate_near (%u Hz) failed: %s", rate, snd_strerror(err));
+        snd_pcm_hw_params_free(local_hw_params);
+        return false;
+    }
+    if (rate != actual_rate_from_alsa) {
+        app_log("NOTICE", "Reconfig: Requested rate %u Hz, ALSA effective rate %u Hz.", rate, actual_rate_from_alsa);
+        rate = actual_rate_from_alsa; // Update global rate to what ALSA actually set
+    }
+
+    if (wav_header.num_channels == 0) {
+        app_log("ERROR", "New track WAV header has 0 channels. Cannot reconfigure ALSA.");
+        snd_pcm_hw_params_free(local_hw_params);
+        return false;
+    }
+    err = snd_pcm_hw_params_set_channels(pcm_handle, local_hw_params, wav_header.num_channels);
+    if (err < 0) {
+        app_log("ERROR", "Reconfig: snd_pcm_hw_params_set_channels (%u) failed: %s", wav_header.num_channels, snd_strerror(err));
+        snd_pcm_hw_params_free(local_hw_params);
+        return false;
+    }
+
+    if (wav_header.block_align == 0) {
+        app_log("ERROR", "New track WAV header block_align is zero. Cannot reconfigure ALSA buffer/period sizes.");
+        snd_pcm_hw_params_free(local_hw_params);
+        return false;
+    }
+    snd_pcm_uframes_t alsa_buffer_frames = buffer_size / wav_header.block_align; // buffer_size is software buff size in bytes
+    snd_pcm_uframes_t alsa_period_frames = period_size / wav_header.block_align; // period_size is INITIAL_PERIOD_SIZE in bytes
+
+    err = snd_pcm_hw_params_set_buffer_size_near(pcm_handle, local_hw_params, &alsa_buffer_frames);
+    if (err < 0) {
+        app_log("ERROR", "Reconfig: snd_pcm_hw_params_set_buffer_size_near (%lu frames) failed: %s", alsa_buffer_frames, snd_strerror(err));
+        snd_pcm_hw_params_free(local_hw_params);
+        return false;
+    }
+
+    err = snd_pcm_hw_params_set_period_size_near(pcm_handle, local_hw_params, &alsa_period_frames, 0);
+    if (err < 0) {
+        app_log("ERROR", "Reconfig: snd_pcm_hw_params_set_period_size_near (%lu frames) failed: %s", alsa_period_frames, snd_strerror(err));
+        snd_pcm_hw_params_free(local_hw_params);
+        return false;
+    }
+    frames = alsa_buffer_frames; // Update global frames to actual ALSA buffer size for this track
+
+    err = snd_pcm_hw_params(pcm_handle, local_hw_params);
+    if (err < 0) {
+        app_log("ERROR", "Reconfig: snd_pcm_hw_params (commit to driver) failed: %s", snd_strerror(err));
+        snd_pcm_hw_params_free(local_hw_params);
+        return false;
+    }
+
+    // Query and log actual parameters set
+    snd_pcm_format_t actual_format_check;
+    unsigned int actual_rate_check;
+    unsigned int actual_channels_check;
+    snd_pcm_hw_params_get_format(local_hw_params, &actual_format_check);
+    snd_pcm_hw_params_get_rate(local_hw_params, &actual_rate_check, 0);
+    snd_pcm_hw_params_get_channels(local_hw_params, &actual_channels_check);
+    app_log("INFO", "ALSA Reconfigured - Effective Params: Format: %s, Rate: %u Hz, Channels: %u",
+           snd_pcm_format_name(actual_format_check), actual_rate_check, actual_channels_check);
+
+    snd_pcm_uframes_t actual_period_frames_check, actual_buffer_frames_check;
+    snd_pcm_hw_params_get_period_size(local_hw_params, &actual_period_frames_check, 0);
+    snd_pcm_hw_params_get_buffer_size(local_hw_params, &actual_buffer_frames_check);
+    app_log("INFO", "ALSA Reconfigured - Effective Period: %lu frames, Effective Buffer: %lu frames", actual_period_frames_check, actual_buffer_frames_check);
+    frames = actual_buffer_frames_check; // Final update to global frames
+
+    snd_pcm_hw_params_free(local_hw_params);
+
+    err = snd_pcm_prepare(pcm_handle);
+    if (err < 0) {
+        app_log("ERROR", "Reconfig: snd_pcm_prepare failed: %s", snd_strerror(err));
+        return false;
+    }
+
+    app_log("INFO", "ALSA reconfigured and prepared successfully for new track.");
+    return true;
+}
+
 // --- WSOLA Function Prototypes ---
 static void generate_sine_window_q15(short *w, int N);
 static float calculate_normalized_cross_correlation(const short *segment1, const short *segment2, int length);
@@ -485,6 +652,14 @@ bool load_track(int track_idx)
     }
     app_log("INFO", "Loading track %d/%d: %s", track_idx + 1, num_music_files, music_files[track_idx]);
     open_music_file(music_files[track_idx]); // open_music_file handles its own errors/exit
+
+    // Reconfigure ALSA for the new track's parameters
+    if (!reconfigure_alsa_for_track()) {
+        app_log("ERROR", "Failed to reconfigure ALSA for new track: %s. Playback aborted for this track.", music_files[track_idx]);
+        // fclose(fp); // fp is handled by the next load_track or exit
+        // fp = NULL;
+        return false; // Critical failure, cannot proceed with this track
+    }
 
     // Reset playback state for the new track
     playback_paused = false; 
@@ -1548,15 +1723,17 @@ playback_end:
         // Here, they point to argv, so no individual free needed.
         free(music_files);
     }
+
+    if (wsola_state != NULL)
+    {
+        wsola_destroy(&wsola_state);
+    }
+
     app_log("INFO", "MusicApp exiting normally.");
     if (log_fp != NULL)
     {
         fclose(log_fp);
         log_fp = NULL; // Good practice to NULL out closed file pointers
-    }
-    if (wsola_state != NULL)
-    {
-        wsola_destroy(&wsola_state);
     }
     return 0;
 }
