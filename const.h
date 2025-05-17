@@ -171,6 +171,11 @@ typedef struct {
     // from where the *next* ideal analysis frame should begin.
     long long next_ideal_input_frame_start_sample_offset;
 
+    // The absolute sample offset in the original continuous input stream 
+    // that input_buffer_ring[0] currently corresponds to. This helps map
+    // absolute stream positions to indices within the ring buffer.
+    long long input_ring_buffer_stream_start_offset;
+
 } WSOLA_State;
 
 // Function pointer type for similarity measure, if we want to make it pluggable

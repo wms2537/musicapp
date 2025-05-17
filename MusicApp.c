@@ -368,6 +368,29 @@ bool load_track(int track_idx) {
     playback_paused = false; 
     initialize_fir_history(); // Reset FIR history for new track
 
+    // --- Re-initialize WSOLA for the new track if necessary ---
+    if (wsola_state != NULL) {
+        wsola_destroy(&wsola_state); // Destroy existing state
+    }
+    // Attempt to init WSOLA if new track is compatible (S16_LE Mono)
+    // Note: `rate` and `pcm_format` should be updated by open_music_file and subsequent logic in main for the *first* track.
+    // For subsequent tracks, `wav_header` is updated by open_music_file. We need to use these fresh values.
+    if (wav_header.audio_format == 1 && wav_header.bits_per_sample == 16 && wav_header.num_channels == 1) { // PCM S16_LE MONO
+        // Use current_speed_idx which holds the user's desired speed setting.
+        // `rate` for ALSA might differ slightly from `wav_header.sample_rate` due to `set_rate_near`.
+        // It's crucial WSOLA uses the actual sample rate of the data it processes.
+        // Assuming `wav_header.sample_rate` is the true rate of the file data before any ALSA adjustments.
+        if (!wsola_init(&wsola_state, wav_header.sample_rate, wav_header.num_channels, 
+                        PLAYBACK_SPEED_FACTORS[current_speed_idx],
+                        DEFAULT_ANALYSIS_FRAME_MS, DEFAULT_OVERLAP_PERCENTAGE, DEFAULT_SEARCH_WINDOW_MS)) {
+            app_log("ERROR", "Failed to re-initialize WSOLA for new track. Pitch-preserving speed control disabled for this track.");
+        }
+    } else {
+        app_log("INFO", "New track is not S16_LE Mono. WSOLA disabled for this track. Format: %d, Channels: %d, Bits: %d", 
+                wav_header.audio_format, wav_header.num_channels, wav_header.bits_per_sample);
+        wsola_state = NULL; // Ensure it remains NULL
+    }
+
     // Critical: Re-check and apply ALSA parameters if they can change per track
     // For now, we assume parameters like rate/format are compatible or re-derived
     // in open_music_file and subsequent ALSA setup in main.
@@ -534,6 +557,20 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    // --- Initialize WSOLA --- 
+    // WSOLA currently supports S16_LE Mono only.
+    if (pcm_format == SND_PCM_FORMAT_S16_LE && wav_header.num_channels == 1) {
+        if (!wsola_init(&wsola_state, rate, wav_header.num_channels, 
+                        PLAYBACK_SPEED_FACTORS[current_speed_idx],
+                        DEFAULT_ANALYSIS_FRAME_MS, DEFAULT_OVERLAP_PERCENTAGE, DEFAULT_SEARCH_WINDOW_MS)) {
+            app_log("ERROR", "Failed to initialize WSOLA. Pitch-preserving speed control will be disabled.");
+            // wsola_state will be NULL, subsequent checks for wsola_state will bypass it.
+        }
+    } else {
+        app_log("INFO", "WSOLA pitch-preserving speed control currently requires S16_LE Mono. Format: %s, Channels: %d. Using simple speed change.", snd_pcm_format_name(pcm_format), wav_header.num_channels);
+        wsola_state = NULL; // Ensure it's NULL if not compatible
+    }
+
     debug_msg(snd_pcm_hw_params_malloc(&hw_params), "分配snd_pcm_hw_params_t结构体");
     pcm_name = strdup(sound_card_name);
     debug_msg(snd_pcm_open(&pcm_handle, pcm_name, stream, 0), "打开PCM设备");
@@ -665,14 +702,18 @@ int main(int argc, char *argv[]) {
                         current_speed_idx--;
                     }
                     app_log("INFO", "Playback speed: %.1fx", PLAYBACK_SPEED_FACTORS[current_speed_idx]);
-                    // No TODO needed here, logic is in the main playback section
+                    if (wsola_state) {
+                        wsola_state->current_speed_factor = PLAYBACK_SPEED_FACTORS[current_speed_idx];
+                    }
                 }
                 else if (c_in == ']') { // Increase speed
                     if (current_speed_idx < NUM_SPEED_LEVELS - 1) {
                         current_speed_idx++;
                     }
                     app_log("INFO", "Playback speed: %.1fx", PLAYBACK_SPEED_FACTORS[current_speed_idx]);
-                    // No TODO needed here, logic is in the main playback section
+                    if (wsola_state) {
+                        wsola_state->current_speed_factor = PLAYBACK_SPEED_FACTORS[current_speed_idx];
+                    }
                 }
                 else if (c_in >= '1' && c_in <= '0' + NUM_EQ_PRESETS) {
                     int new_eq_idx = c_in - '1';
@@ -769,71 +810,96 @@ int main(int argc, char *argv[]) {
         short* source_buffer_for_speed_change_s16 = (eq_processed_audio_buffer_s16 != NULL) ? eq_processed_audio_buffer_s16 : (short*)buff;
         int num_source_samples_for_speed_change = num_samples_in_buff;
 
-        if (fabs(current_speed - 1.0) < 1e-6) { // Compare double for equality with tolerance
-            buffer_for_alsa = (unsigned char*)source_buffer_for_speed_change_s16;
-            frames_for_alsa = num_source_samples_for_speed_change / wav_header.num_channels; // Assuming block_align is reliable for S16_LE stereo/mono
-                                                                                         // More robust: num_source_samples (which is total samples, not per channel) / num_channels for frame count.
-                                                                                         // block_align = (bits_per_sample/8) * num_channels. So frames_read_this_iteration = read_ret / block_align
-            frames_for_alsa = frames_read_this_iteration; // This was already calculated and seems more direct
+        // --- WSOLA / Speed Change Logic --- 
+        bool use_wsola = (wsola_state != NULL && pcm_format == SND_PCM_FORMAT_S16_LE && wav_header.num_channels == 1);
 
-            // If EQ was applied, buffer_for_alsa points to eq_processed_audio_buffer_s16.
-            // If EQ was bypassed or failed, it points to buff (cast to short* then back to unsigned char*).
-            // No new allocation is needed here unless the source was `buff` and `eq_processed_audio_buffer_s16` was used.
-            // This path is for NO speed change. If eq_processed_audio_buffer_s16 exists, it's the data to play.
-            if (eq_processed_audio_buffer_s16 != NULL) {
-                 buffer_for_alsa = (unsigned char*)eq_processed_audio_buffer_s16;
+        if (use_wsola) {
+            // WSOLA Path (Pitch Preserving)
+            // Estimate max possible output samples from WSOLA for this input chunk
+            // Max output = input_samples / min_speed_factor (e.g., 0.5x)
+            // A safe buffer: num_source_samples_for_speed_change / 0.5 (i.e., * 2) + some margin for frame alignment.
+            int max_wsola_output_samples = (int)((double)num_source_samples_for_speed_change / PLAYBACK_SPEED_FACTORS[0]) + wsola_state->analysis_frame_samples;
+            resampled_audio_buffer_s16 = (short *)malloc(max_wsola_output_samples * sizeof(short));
+
+            if (resampled_audio_buffer_s16 == NULL) {
+                app_log("ERROR", "Failed to allocate memory for WSOLA output buffer. Using simple speed change for this chunk.");
+                use_wsola = false; // Fallback
+                processed_buffer_allocated = false;
             } else {
-                 buffer_for_alsa = buff; // Original data from file
-            }
-
-        } else {
-            // Calculate target number of output frames/samples
-            // Speed adjustment operates on samples. num_source_samples_for_speed_change is total samples (L+R for stereo)
-            int target_num_output_samples = (int)round((double)num_source_samples_for_speed_change / current_speed);
-            frames_for_alsa = target_num_output_samples / wav_header.num_channels; // Convert total samples to frames
-
-            if (target_num_output_samples > 0) {
-                size_t resampled_buffer_size_bytes = target_num_output_samples * sizeof(short); // Since we work with short samples
-                resampled_audio_buffer_s16 = (short *)malloc(resampled_buffer_size_bytes);
-
-                if (resampled_audio_buffer_s16 == NULL) {
-                    app_log("ERROR", "Failed to allocate memory for speed-adjusted buffer (size %zu). Playing normal for this chunk.", resampled_buffer_size_bytes);
-                    buffer_for_alsa = (unsigned char*)source_buffer_for_speed_change_s16; // Fallback to source (potentially EQd)
-                    frames_for_alsa = frames_read_this_iteration;
-                    processed_buffer_allocated = false; // Mark that the resampled_audio_buffer_s16 is not the one to free later
+                int wsola_output_count = wsola_process(wsola_state, 
+                                                       source_buffer_for_speed_change_s16, 
+                                                       num_source_samples_for_speed_change, 
+                                                       resampled_audio_buffer_s16, 
+                                                       max_wsola_output_samples);
+                if (wsola_output_count > 0) {
+                    buffer_for_alsa = (unsigned char*)resampled_audio_buffer_s16;
+                    frames_for_alsa = wsola_output_count / wav_header.num_channels; // wsola_output_count is total samples
+                    processed_buffer_allocated = true;
                 } else {
-                    processed_buffer_allocated = true; // resampled_audio_buffer_s16 was allocated
-                    double input_sample_cursor = 0.0;
-                    int actual_output_samples_generated = 0;
-                    
-                    for (int out_sample_num = 0; out_sample_num < target_num_output_samples; ++out_sample_num) {
-                        int input_sample_to_sample_idx = (int)floor(input_sample_cursor);
-                        
-                        if (input_sample_to_sample_idx >= num_source_samples_for_speed_change) {
-                            target_num_output_samples = actual_output_samples_generated;
-                            frames_for_alsa = actual_output_samples_generated / wav_header.num_channels;
-                            break;
-                        }
-                        
-                        resampled_audio_buffer_s16[actual_output_samples_generated] = 
-                            source_buffer_for_speed_change_s16[input_sample_to_sample_idx];
-                        actual_output_samples_generated++;
-                        input_sample_cursor += current_speed;
-                    }
-                    frames_for_alsa = actual_output_samples_generated / wav_header.num_channels; // Update based on actual generation
-
-                    if (frames_for_alsa == 0 && processed_buffer_allocated) { 
-                        free(resampled_audio_buffer_s16);
-                        resampled_audio_buffer_s16 = NULL; 
-                        processed_buffer_allocated = false;
-                        buffer_for_alsa = NULL; // No data to play
-                    } else if (processed_buffer_allocated) {
-                        buffer_for_alsa = (unsigned char*)resampled_audio_buffer_s16;
-                    }
+                    // No output from WSOLA, or error
+                    app_log("WARNING", "WSOLA processing returned 0 samples.");
+                    buffer_for_alsa = NULL; // No data to play
+                    frames_for_alsa = 0;
+                    free(resampled_audio_buffer_s16); // Free the buffer we allocated
+                    resampled_audio_buffer_s16 = NULL;
+                    processed_buffer_allocated = false;
                 }
-            } else {
-                frames_for_alsa = 0;
-                buffer_for_alsa = NULL; // No data to play
+            }
+        }
+        
+        // Fallback to simple speed change if WSOLA not used or failed for this chunk
+        if (!use_wsola) {
+            double current_speed = PLAYBACK_SPEED_FACTORS[current_speed_idx];
+            if (fabs(current_speed - 1.0) < 1e-6) { // No speed change or WSOLA path not taken
+                buffer_for_alsa = (unsigned char*)source_buffer_for_speed_change_s16;
+                frames_for_alsa = frames_read_this_iteration;
+                if (eq_processed_audio_buffer_s16 != NULL) {
+                    buffer_for_alsa = (unsigned char*)eq_processed_audio_buffer_s16;
+                } else {
+                    buffer_for_alsa = buff; 
+                }
+                processed_buffer_allocated = false; // No new buffer was allocated for speed change here
+            } else { // Simple pitch-changing speed adjustment
+                int target_num_output_samples = (int)round((double)num_source_samples_for_speed_change / current_speed);
+                frames_for_alsa = target_num_output_samples / wav_header.num_channels;
+                if (target_num_output_samples > 0) {
+                    size_t resampled_buffer_size_bytes = target_num_output_samples * sizeof(short);
+                    resampled_audio_buffer_s16 = (short *)malloc(resampled_buffer_size_bytes);
+                    if (resampled_audio_buffer_s16 == NULL) {
+                        app_log("ERROR", "Failed to allocate memory for simple speed-adjusted buffer. Playing normal for this chunk.");
+                        buffer_for_alsa = (unsigned char*)source_buffer_for_speed_change_s16;
+                        frames_for_alsa = frames_read_this_iteration;
+                        processed_buffer_allocated = false;
+                    } else {
+                        processed_buffer_allocated = true;
+                        double input_sample_cursor = 0.0;
+                        int actual_output_samples_generated = 0;
+                        for (int out_sample_num = 0; out_sample_num < target_num_output_samples; ++out_sample_num) {
+                            int input_sample_to_sample_idx = (int)floor(input_sample_cursor);
+                            if (input_sample_to_sample_idx >= num_source_samples_for_speed_change) {
+                                target_num_output_samples = actual_output_samples_generated;
+                                frames_for_alsa = actual_output_samples_generated / wav_header.num_channels;
+                                break;
+                            }
+                            resampled_audio_buffer_s16[actual_output_samples_generated] = 
+                                source_buffer_for_speed_change_s16[input_sample_to_sample_idx];
+                            actual_output_samples_generated++;
+                            input_sample_cursor += current_speed;
+                        }
+                        frames_for_alsa = actual_output_samples_generated / wav_header.num_channels;
+                        if (frames_for_alsa == 0 && processed_buffer_allocated) { 
+                            free(resampled_audio_buffer_s16);
+                            resampled_audio_buffer_s16 = NULL; 
+                            processed_buffer_allocated = false;
+                            buffer_for_alsa = NULL;
+                        } else if (processed_buffer_allocated) {
+                            buffer_for_alsa = (unsigned char*)resampled_audio_buffer_s16;
+                        }
+                    }
+                } else {
+                    frames_for_alsa = 0;
+                    buffer_for_alsa = NULL;
+                }
             }
         }
 
@@ -905,10 +971,32 @@ playback_end:
         fclose(log_fp);
         log_fp = NULL; // Good practice to NULL out closed file pointers
     }
+    if (wsola_state != NULL) {
+        wsola_destroy(&wsola_state);
+    }
     return 0;
 }
 
 // --- WSOLA Implementation ---
+
+// Helper to add input samples to the WSOLA ring buffer.
+static void wsola_add_input_to_ring_buffer(WSOLA_State *state, const short *input_samples, int num_input_samples) {
+    if (!state || !input_samples || num_input_samples <= 0) return;
+
+    for (int i = 0; i < num_input_samples; ++i) {
+        if (state->input_buffer_content >= state->input_buffer_capacity) {
+            // Buffer is full, this shouldn't happen if wsola_process manages consumption correctly.
+            // Overwrite oldest data by advancing read_pos and stream_start_offset.
+            app_log("WARNING", "WSOLA input ring buffer full. Overwriting oldest sample.");
+            state->input_buffer_read_pos = (state->input_buffer_read_pos + 1) % state->input_buffer_capacity;
+            state->input_ring_buffer_stream_start_offset++;
+            state->input_buffer_content--; 
+        }
+        state->input_buffer_ring[state->input_buffer_write_pos] = input_samples[i];
+        state->input_buffer_write_pos = (state->input_buffer_write_pos + 1) % state->input_buffer_capacity;
+        state->input_buffer_content++;
+    }
+}
 
 // Generates a Hanning window of a given length.
 // Output `window` values are typically floats [0,1], here we might store Q15 shorts if direct scaling desired
@@ -1170,6 +1258,7 @@ bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_a
     s->total_input_samples_processed = 0;
     s->total_output_samples_generated = 0;
     s->next_ideal_input_frame_start_sample_offset = 0; // Start at the beginning of the stream
+    s->input_ring_buffer_stream_start_offset = 0;    // Initially, ring buffer index 0 is stream sample 0
 
     *state_ptr = s;
     app_log("INFO", "wsola_init: WSOLA state initialized successfully. N=%d, No=%d, Ha=%d, Sw=%d, InputRingCap=%d",
@@ -1189,4 +1278,169 @@ void wsola_destroy(WSOLA_State **state_ptr) {
         *state_ptr = NULL;
         app_log("INFO", "wsola_destroy: WSOLA state destroyed.");
     }
+}
+
+// Main WSOLA processing function
+// Takes num_input_samples, processes them, and puts time-scaled samples into output_buffer.
+// Returns the number of samples written to output_buffer.
+int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_samples, 
+                  short *output_buffer, int max_output_samples) {
+    if (!state || !output_buffer || max_output_samples <= 0) {
+        return 0; // No state or no place to put output
+    }
+    if (input_samples && num_input_samples > 0) {
+        wsola_add_input_to_ring_buffer(state, input_samples, num_input_samples);
+    }
+
+    int output_samples_written = 0;
+    int N = state->analysis_frame_samples;
+    int N_o = state->overlap_samples;
+    int H_a = state->analysis_hop_samples; // Nominal analysis hop = N - N_o
+
+    // Effective synthesis hop size (how many output samples we generate per frame)
+    int H_s_eff = (int)round((double)H_a / state->current_speed_factor);
+    if (H_s_eff <= 0) H_s_eff = 1; // Ensure progress even at very high speed factors
+
+    while (output_samples_written + H_s_eff <= max_output_samples) {
+        // Condition to check if enough data is available in the ring buffer for a full operation:
+        // We need to be able to extract a segment of N samples starting from an ideal point +/- search_window_samples.
+        // The ideal point is 'next_ideal_input_frame_start_sample_offset'.
+        // The latest sample needed for search is roughly 'next_ideal_input_frame_start_sample_offset + N + S_w'.
+        // The earliest sample available in buffer is at 'input_ring_buffer_stream_start_offset + input_buffer_read_pos' (effectively just input_ring_buffer_stream_start_offset for the start of content)
+        long long latest_required_stream_offset = state->next_ideal_input_frame_start_sample_offset + N + state->search_window_samples;
+        long long latest_available_stream_offset = state->input_ring_buffer_stream_start_offset + state->input_buffer_content;
+
+        if (latest_available_stream_offset < latest_required_stream_offset) {
+            // Not enough data in the ring buffer to ensure a safe search and extraction
+            // app_log("DEBUG", "WSOLA: Insufficient data. Available up to %lld, need up to %lld for next frame starting at %lld", latest_available_stream_offset, latest_required_stream_offset, state->next_ideal_input_frame_start_sample_offset);
+            break; 
+        }
+
+        // Determine the ring buffer index for the center of our search.
+        // This corresponds to where `state->next_ideal_input_frame_start_sample_offset` falls in the current ring.
+        int ideal_search_center_ring_idx = 
+            (int)((state->next_ideal_input_frame_start_sample_offset - state->input_ring_buffer_stream_start_offset + state->input_buffer_capacity)) 
+            % state->input_buffer_capacity;
+
+        int best_offset_from_ideal_center = 0;
+        float correlation = find_best_match_segment(state, 
+                                                state->output_overlap_add_buffer, 
+                                                ideal_search_center_ring_idx, 
+                                                &best_offset_from_ideal_center);
+
+        if (correlation < -1.5f) { // find_best_match_segment returns -2.0f on error/no segment
+            app_log("WARNING", "WSOLA: find_best_match_segment failed or found no good correlation (%.2f). Using zero offset.", correlation);
+            best_offset_from_ideal_center = 0; // Fallback to no offset
+        }
+
+        // Actual start of the N-sample synthesis segment in the ring buffer
+        int actual_synthesis_segment_start_ring_idx = 
+            (ideal_search_center_ring_idx + best_offset_from_ideal_center + state->input_buffer_capacity) 
+            % state->input_buffer_capacity;
+
+        // Extract the N-sample segment into state->current_synthesis_segment
+        if (!get_segment_from_ring_buffer(state, actual_synthesis_segment_start_ring_idx, N, state->current_synthesis_segment)) {
+            app_log("ERROR", "WSOLA: Failed to get synthesis segment from ring buffer. Skipping frame.");
+            // This is a critical issue, implies logic error or insufficient data despite checks.
+            // Attempt to advance input markers to prevent infinite loop if possible, or break.
+            // For now, just break to avoid bad state propagation.
+            break; 
+        }
+
+        // Apply Hanning window (Q15)
+        for (int i = 0; i < N; ++i) {
+            long long val = (long long)state->current_synthesis_segment[i] * state->analysis_window_function[i];
+            state->current_synthesis_segment[i] = (short)(val >> 15); // Q15 scaling
+        }
+
+        int samples_to_write_this_frame = H_s_eff;
+        int samples_written_this_frame_ola = 0;
+        int samples_written_this_frame_new = 0;
+
+        // 1. Overlap-Add N_o samples and write to output_buffer
+        for (int i = 0; i < N_o; ++i) {
+            if (output_samples_written < max_output_samples && samples_written_this_frame_ola < samples_to_write_this_frame) {
+                long long sum = (long long)state->output_overlap_add_buffer[i] + state->current_synthesis_segment[i];
+                if (sum > 32767) sum = 32767;
+                if (sum < -32768) sum = -32768;
+                output_buffer[output_samples_written++] = (short)sum;
+                samples_written_this_frame_ola++;
+            } else {
+                break; // Output buffer full or frame's sample quota met
+            }
+        }
+
+        // 2. Write the new part (H_s_eff - N_o samples) from current_synthesis_segment
+        // The new part starts at index N_o in current_synthesis_segment.
+        int new_part_to_write = samples_to_write_this_frame - samples_written_this_frame_ola;
+        for (int i = 0; i < new_part_to_write; ++i) {
+            if (output_samples_written < max_output_samples) {
+                if ((N_o + i) < N) { // Ensure we don't read past current_synthesis_segment bounds
+                    output_buffer[output_samples_written++] = state->current_synthesis_segment[N_o + i];
+                    samples_written_this_frame_new++;
+                } else {
+                    // Should not happen if H_s_eff <= H_a (i.e. speed_factor >= 1) or if N_o + new_part_to_write <= N
+                    // This implies we need more samples than available in the non-overlapped part of current_synthesis_segment.
+                    // This occurs if H_s_eff > H_a (speed_factor < 1, slowing down significantly)
+                    // In this case, WSOLA might need to duplicate samples from current_synthesis_segment or use more advanced interpolation.
+                    // For now, if we run out of new samples in current_synthesis_segment, we stop writing for this frame here.
+                    app_log("WARNING", "WSOLA: H_s_eff requires more samples than available in new part of synthesis segment. Frame may be shorter.");
+                    break; 
+                }
+            } else {
+                break; // Output buffer full
+            }
+        }
+        
+        // If fewer than H_s_eff samples were written (e.g. output buffer became full mid-frame)
+        // then the loop condition `output_samples_written + H_s_eff <= max_output_samples` will handle breaking.
+
+        // Update the output_overlap_add_buffer with the tail of the current *windowed* synthesis segment
+        // This is N_o samples from current_synthesis_segment[N-N_o] to current_synthesis_segment[N-1]
+        // which is current_synthesis_segment[H_a] to current_synthesis_segment[N-1]
+        for (int i = 0; i < N_o; ++i) {
+            state->output_overlap_add_buffer[i] = state->current_synthesis_segment[H_a + i];
+        }
+
+        // Update input stream pointers
+        state->next_ideal_input_frame_start_sample_offset += H_a; // Advance ideal input marker by one analysis hop
+
+        // Update total samples processed and generated - this needs to be more precise
+        // state->total_output_samples_generated += (output count in this iteration)
+        // state->total_input_samples_processed = state->next_ideal_input_frame_start_sample_offset; (roughly)
+
+        // Discard old data from ring buffer that's no longer needed for search or processing
+        // Oldest sample needed for next search: state->next_ideal_input_frame_start_sample_offset - S_w
+        // (actually, it's for an N_o segment starting there)
+        long long min_retainable_abs_offset = state->next_ideal_input_frame_start_sample_offset - state->search_window_samples - N_o; 
+        if (min_retainable_abs_offset < 0) min_retainable_abs_offset = 0;
+
+        long long current_ring_start_abs_offset = state->input_ring_buffer_stream_start_offset;
+        int samples_to_discard = 0;
+        if (state->input_buffer_content > 0) { // only discard if buffer not empty
+            samples_to_discard = (int)(min_retainable_abs_offset - current_ring_start_abs_offset);
+        }
+
+        if (samples_to_discard > 0) {
+            if (samples_to_discard > state->input_buffer_content) {
+                samples_to_discard = state->input_buffer_content; // Cannot discard more than we have
+            }
+            state->input_buffer_read_pos = (state->input_buffer_read_pos + samples_to_discard) % state->input_buffer_capacity;
+            state->input_buffer_content -= samples_to_discard;
+            state->input_ring_buffer_stream_start_offset += samples_to_discard;
+        } else if (samples_to_discard < 0) {
+            // This implies min_retainable is behind current_ring_start, which is okay, means no discard needed based on this logic.
+            // app_log("DEBUG", "WSOLA: samples_to_discard is negative (%d), no discard needed.", samples_to_discard);
+        }
+        // Loop break condition for output buffer full is handled by `output_samples_written + H_s_eff <= max_output_samples`
+        // and checks inside the OLA/copy loops. The main loop condition handles this.
+    } // End of while loop
+
+    state->total_output_samples_generated += output_samples_written;
+    // total_input_samples_processed is implicitly tracked by next_ideal_input_frame_start_sample_offset for processed *frames*
+    // More accurately, it should reflect the actual latest sample from input that was used or could have been used for search for the last generated frame.
+    // This is complex to track perfectly without knowing exactly which sample was picked by find_best_match.
+    // For now, next_ideal_input_frame_start_sample_offset is a good proxy for input consumed up to the start of the next processing frame.
+
+    return output_samples_written;
 }
