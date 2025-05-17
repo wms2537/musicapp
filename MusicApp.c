@@ -1060,6 +1060,30 @@ static long long calculate_cross_correlation_numerator(const short *segment1, co
 // Helper function to safely get a segment of 'length' samples starting from
 // 'start_index_in_ring' in the ring buffer.
 // Returns true if successful, false if the segment cannot be fully extracted (e.g., not enough data).
+static bool get_segment_from_ring_buffer(const WSOLA_State *state, int start_index_in_ring, int length, short *output_segment) {
+    if (!state || !state->input_buffer_ring || !output_segment || length <= 0) {
+        // app_log("ERROR", "get_segment: Invalid arguments (state=%p, ring=%p, out=%p, len=%d)", state, state ? state->input_buffer_ring : NULL, output_segment, length);
+        return false;
+    }
+    // Check if the entire segment is actually available *contiguously* from the perspective of content,
+    // not just if `length` is less than `input_buffer_content`. This check is subtle because the ring buffer wraps.
+    // The main protection is that find_best_match_segment and wsola_process should only ask for segments
+    // they believe are available based on `input_buffer_content` and `input_ring_buffer_stream_start_offset`.
+    // The original simple check `length > state->input_buffer_content` is a good first pass.
+    if (length > state->input_buffer_content) {
+        app_log("DEBUG", "get_segment: not enough content (%d) in ring buffer for requested length %d. Start_idx_ring=%d", state->input_buffer_content, length, start_index_in_ring);
+        return false;
+    }
+
+    for (int i = 0; i < length; i++) {
+        int current_ring_idx = (start_index_in_ring + i) % state->input_buffer_capacity;
+        // No additional check here for if current_ring_idx has been overwritten,
+        // relying on input_buffer_content to be accurate.
+        output_segment[i] = state->input_buffer_ring[current_ring_idx];
+    }
+    return true;
+}
+
 static long long find_best_match_segment(
     const WSOLA_State *state,
     const short *target_segment_for_comparison, // This is typically state->output_overlap_add_buffer
