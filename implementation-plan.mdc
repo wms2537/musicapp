@@ -173,7 +173,9 @@ alwaysApply: false
               5.  **ALSA Guards**: Added code in `main()` to query and print actual ALSA format, rate, and channels after `snd_pcm_hw_params`.
               6.  **Debug Logging**: Introduced `debug_enabled` flag and `DBG(...)` macro; replaced `app_log("DEBUG", ...)` calls to allow conditional debug output (currently enabled for testing).
           *Done*
-          *Summary: User reported continued distortion even at normal speed with FIR filter bypassed. This strongly suggests an issue within `wsola_process` itself, as it's active for S16_LE mono even at 1.0x speed. To confirm, added a temporary bypass at the start of `wsola_process`: if speed is 1.0x, it directly copies input to output, skipping all WSOLA internal logic (but still performing basic input ring buffer management). This will determine if WSOLA internals are the source of distortion at normal speed.
+          *Summary: User reported continued distortion even at normal speed with FIR filter bypassed. Added a temporary bypass in `wsola_process` for 1.0x speed. This resulted in normal audio at 1.0x speed but with new intermittent pauses, confirming the distortion is within WSOLA's core logic when active. The pauses at 1.0x with the WSOLA internal bypass were likely due to how the bypass managed state/flow.
+          *Done*
+          *Summary: To cleanly test WSOLA's impact, removed the 1.0x speed bypass from within `wsola_process`. Instead, modified the `use_wsola` flag condition in `main()` to only be true if speed is *not* 1.0x (in addition to S16_LE mono format). This ensures that at 1.0x speed, the application uses its standard direct playback path (which should be clean and without pauses), and WSOLA is only engaged for other speeds. FIR filter remains bypassed for now.
 
   6.  **Update Documentation (README.md)**:
       *   Reflect that playback speed control now preserves pitch.

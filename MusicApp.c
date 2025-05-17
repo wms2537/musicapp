@@ -835,22 +835,15 @@ int main(int argc, char *argv[]) {
         // Assuming S16_LE for now as it's common and handled by ALSA setup.
         // If format is different, conversion will be needed here.
 
+        // --- FIR FILTER IS CURRENTLY BYPASSED in apply_fir_filter() FOR DEBUGGING ---
         if (pcm_format != SND_PCM_FORMAT_S16_LE) {
             app_log("WARNING", "FIR EQ currently assumes S16_LE input. Format is %s. EQ will be bypassed for this chunk.", snd_pcm_format_name(pcm_format));
-            // If not S16_LE, bypass EQ or implement conversion
-            // For now, bypass by setting buffer_for_alsa to buff directly later if no speed change
         } else {
-            // EQ Processing (S16_LE)
             eq_processed_audio_buffer_s16 = (short*)malloc(num_samples_in_buff * sizeof(short));
             if (eq_processed_audio_buffer_s16 == NULL) {
                 app_log("ERROR", "Failed to allocate memory for EQ output buffer. EQ will be bypassed for this chunk.");
-                // Fallback: use original buff samples if EQ alloc fails
-                // This means if speed adjustment also happens, it will use original data
             } else {
-                // Apply FIR filter
-                // Note: buff contains unsigned char. Need to cast/treat as short* for S16_LE
                 apply_fir_filter((short*)buff, eq_processed_audio_buffer_s16, num_samples_in_buff, EQ_PRESETS[current_eq_idx]);
-                // After this, eq_processed_audio_buffer_s16 contains the filtered audio data
             }
         }
 
@@ -859,9 +852,14 @@ int main(int argc, char *argv[]) {
         int num_source_samples_for_speed_change = num_samples_in_buff;
 
         // --- WSOLA / Speed Change Logic --- 
-        bool use_wsola = (wsola_state != NULL && pcm_format == SND_PCM_FORMAT_S16_LE && wav_header.num_channels == 1);
+        // WSOLA is used if state exists, format is S16_LE mono, AND speed is NOT 1.0x
+        bool use_wsola = (wsola_state != NULL && 
+                          pcm_format == SND_PCM_FORMAT_S16_LE && 
+                          wav_header.num_channels == 1 &&
+                          fabs(current_speed - 1.0) >= 1e-6); // Only use WSOLA if speed is not 1.0x
 
         if (use_wsola) {
+            DBG("MainLoop: Using WSOLA for speed %.2fx", current_speed);
             // WSOLA Path (Pitch Preserving)
             // Estimate max possible output samples from WSOLA for this input chunk
             // Max output = input_samples / min_speed_factor (e.g., 0.5x)
@@ -1370,36 +1368,8 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         return 0; // No state or no place to put output
     }
 
-    // --- TEMPORARY BYPASS FOR 1.0x SPEED --- 
-    if (fabs(state->current_speed_factor - 1.0) < 1e-6) {
-        DBG("WSOLA_PROCESS: Speed is 1.0x, performing direct copy bypass.");
-        int samples_to_copy = (num_input_samples < max_output_samples) ? num_input_samples : max_output_samples;
-        if (input_samples && samples_to_copy > 0) {
-            memcpy(output_buffer, input_samples, samples_to_copy * sizeof(short));
-            // Nullify WSOLA internal buffers and reset counters as if it processed, to avoid issues if speed changes later
-            // This is a bit crude; a proper flush/reset might be needed if switching from this bypass to active WSOLA.
-            // For now, just ensure input buffer doesn't grow indefinitely if 1.0x is used for a while.
-            wsola_add_input_to_ring_buffer(state, input_samples, num_input_samples); // Still add to ring buffer
-            
-            long long min_retainable_abs_offset = state->next_ideal_input_frame_start_sample_offset 
-                                            - state->search_window_samples 
-                                            - state->overlap_samples; 
-            if (min_retainable_abs_offset < 0) min_retainable_abs_offset = 0;
-            int samples_to_discard = (int)(min_retainable_abs_offset - state->input_ring_buffer_stream_start_offset);
-            if (samples_to_discard > 0) {
-                if (samples_to_discard > state->input_buffer_content) {
-                    samples_to_discard = state->input_buffer_content;
-                }
-                state->input_buffer_read_pos = (state->input_buffer_read_pos + samples_to_discard) % state->input_buffer_capacity;
-                state->input_buffer_content -= samples_to_discard;
-                state->input_ring_buffer_stream_start_offset += samples_to_discard;
-            }
-            state->next_ideal_input_frame_start_sample_offset += num_input_samples; // Advance ideal input marker
-            state->total_output_samples_generated += samples_to_copy;
-            return samples_to_copy;
-        }
-        return 0;
-    }
+    // --- TEMPORARY BYPASS FOR 1.0x SPEED --- (REMOVING THIS BLOCK)
+    // if (fabs(state->current_speed_factor - 1.0) < 1e-6) { ... }
     // --- END TEMPORARY BYPASS ---
 
     if (input_samples && num_input_samples > 0) {
