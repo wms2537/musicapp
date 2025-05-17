@@ -182,6 +182,8 @@ alwaysApply: false
           *Summary: The problem is now isolated to `wsola_process` when time-scaling (speed != 1.0x). The FIR filter and 1.0x speed playback are clean. Requesting logs for 0.5x and 2.0x speed to examine NCC values and best_offset from `find_best_match_segment` to diagnose the distortion during active WSOLA processing.
           *Done*
           *Summary: To differentiate between issues in WSOLA's search (`find_best_match_segment`) and its core OLA/resampling, `find_best_match_segment` was temporarily modified to always return offset 0 and perfect correlation (effectively SOLA). User reported distortion persists even with this simplification. Next step is to confirm if ALSA underruns also persisted and to analyze detailed logs from `wsola_process` running in this SOLA mode to trace data flow and calculations.
+          *Done*
+          *Summary: Test with `sum >>= 1` (OLA averaging) removed, while `find_best_match_segment` still forced to offset 0 (SOLA test). Log `music_app-10.log` provided. Distortion persists, but ALSA underruns are GONE. This isolates the distortion to OLA/resampling logic itself, separate from search performance. Next step: Investigate OLA with 50% overlap for Hanning COLA property.
 
   6.  **Update Documentation (README.md)**:
       *   Reflect that playback speed control now preserves pitch.
@@ -237,3 +239,15 @@ This document tracks the implementation of features and major changes in the Mus
         *   Convert processed samples back to `unsigned char *` if needed for ALSA.
     *   Status: Done
     *   Summary: Added `
+
+**If distortion persists with 50% overlap and simplified search**:
+*   Hypothesis: Issue in Hanning window values, application, or resampling of the new segment.
+*   Plan: Detailed review of window generation (`generate_hanning_window`, `convert_float_window_to_q15`), window application in `wsola_process`, and the linear interpolation resampling logic for the new part of the segment. Consider adding more detailed logging for sample values at each stage.
+
+**Next Step (Revised based on "buzzing" with SOLA)**:
+*   Restore the original search logic in `find_best_match_segment` (remove temporary forced offset).
+*   Keep `DEFAULT_OVERLAP_PERCENTAGE` at `0.50f` in `const.h`.
+*   Keep OLA sum in `wsola_process` direct (no `>>1`).
+*   User to test and provide new logs, noting:
+    *   Character of audio (distortion type, if any).
+    *   Presence of ALSA underruns (check if search is now too slow).
