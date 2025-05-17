@@ -172,6 +172,8 @@ alwaysApply: false
               4.  **FIR Performance**: Modified `apply_fir_filter` to use a circular buffer for history (O(1) update per sample), addressing O(N^2) complexity. Added `fir_filter_history_idx` and reset it in `initialize_fir_history`.
               5.  **ALSA Guards**: Added code in `main()` to query and print actual ALSA format, rate, and channels after `snd_pcm_hw_params`.
               6.  **Debug Logging**: Introduced `debug_enabled` flag and `DBG(...)` macro; replaced `app_log("DEBUG", ...)` calls to allow conditional debug output (currently enabled for testing).
+          *Done*
+          *Summary: User reported continued distortion even at normal speed, suspecting FIR filter or WSOLA. To isolate, temporarily bypassed FIR filter processing in `apply_fir_filter` by making it directly copy input to output. This will help determine if FIR is the primary cause of distortion at normal speed. Compiler errors related to DBG macro visibility were also addressed by ensuring correct definition order and making `debug_enabled` static.
 
   6.  **Update Documentation (README.md)**:
       *   Reflect that playback speed control now preserves pitch.

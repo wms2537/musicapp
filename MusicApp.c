@@ -128,6 +128,13 @@ void initialize_fir_history() {
 // For true stereo FIR, you'd typically process each channel with its own history.
 // This implementation processes samples sequentially, assuming they are mono or caller handles stereo separation.
 void apply_fir_filter(short *input_buffer, short *output_buffer, int num_samples, const FIRFilter *filter) {
+    // --- TEMPORARY BYPASS FOR DEBUGGING --- 
+    if (input_buffer != output_buffer) {
+        memcpy(output_buffer, input_buffer, num_samples * sizeof(short));
+    }
+    return; 
+    // --- END TEMPORARY BYPASS ---
+
     if (filter == NULL || filter->num_taps == 0 || filter->num_taps > MAX_FIR_TAPS) {
         // Invalid filter, pass through or handle error
         if (input_buffer != output_buffer) {
