@@ -116,14 +116,14 @@ static void generate_hann_window_q15(short *w, int N);
 static float calculate_normalized_cross_correlation(const short *segment1, const short *segment2, int length);
 static bool get_segment_from_ring_buffer(const WSOLA_State *state, int start_index_in_ring, int length, short *output_segment);
 static long long find_best_match_segment(
-    const WSOLA_State *state,
-    const short *target_segment_for_comparison,
-    int ideal_search_center_ring_idx,
+    const WSOLA_State *state, 
+    const short *target_segment_for_comparison, 
+    int ideal_search_center_ring_idx, 
     int *best_segment_start_offset_from_ideal_center_ptr);
 
-bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_arg, double initial_speed_factor_arg,
+bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_arg, double initial_speed_factor_arg, 
                 int analysis_frame_ms_arg, float overlap_percentage_arg, int search_window_ms_arg);
-int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_samples,
+int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_samples, 
                   short *output_buffer, int max_output_samples);
 void wsola_destroy(WSOLA_State **state_ptr);
 
@@ -151,7 +151,7 @@ void apply_fir_filter(short *input_buffer, short *output_buffer, int num_samples
     // if (input_buffer != output_buffer) {
     //     memcpy(output_buffer, input_buffer, num_samples * sizeof(short));
     // }
-    // return;
+    // return; 
     // --- END TEMPORARY BYPASS ---
 
     if (filter == NULL || filter->num_taps == 0 || filter->num_taps > MAX_FIR_TAPS)
@@ -241,11 +241,11 @@ void set_volume_by_level_idx(int level_idx)
 
     if (NUM_VOLUME_LEVELS > 0)
     { // Ensure this branch is taken if NUM_VOLUME_LEVELS is valid
-        target_raw_volume = vol_min + (long)(proportion * (vol_max - vol_min) + 0.5);
+      target_raw_volume = vol_min + (long)(proportion * (vol_max - vol_min) + 0.5);
     }
     else
     {                                                // Fallback if NUM_VOLUME_LEVELS is not sensible (e.g. 0 or negative)
-        target_raw_volume = (vol_min + vol_max) / 2; // Should not happen with const NUM_VOLUME_LEVELS = 4
+      target_raw_volume = (vol_min + vol_max) / 2; // Should not happen with const NUM_VOLUME_LEVELS = 4
     }
 
     if (target_raw_volume < vol_min)
@@ -267,11 +267,11 @@ void set_volume_by_level_idx(int level_idx)
         double percentage_of_raw_range = 0.0;
         if (vol_max > vol_min)
         {
-            percentage_of_raw_range = ((double)(target_raw_volume - vol_min) / (vol_max - vol_min)) * 100.0;
+             percentage_of_raw_range = ((double)(target_raw_volume - vol_min) / (vol_max - vol_min)) * 100.0;
         }
         else if (target_raw_volume == vol_min && vol_max == vol_min)
         {
-            percentage_of_raw_range = 100.0;
+             percentage_of_raw_range = 100.0;
         }
 
         printf("Volume set to level %d/%d (Target Raw ALSA Val: %ld, Raw Range: %ld-%ld, ~%.0f%% of raw)\n",
@@ -290,7 +290,7 @@ void set_volume_by_level_idx(int level_idx)
             printf("VERIFY: Raw ALSA Val after set for Front Left: %ld\n", actual_raw_val_L);
             if (actual_raw_val_L != target_raw_volume)
             {
-                printf("VERIFY Discrepancy: Target Raw was %ld, ALSA reports %ld for Front Left.\n", target_raw_volume, actual_raw_val_L);
+                 printf("VERIFY Discrepancy: Target Raw was %ld, ALSA reports %ld for Front Left.\n", target_raw_volume, actual_raw_val_L);
             }
         }
     }
@@ -377,9 +377,9 @@ bool init_mixer()
 
     if (USR_BOARD_SPEAKER_MAX)
     {
-        // vol_max for the board is about 500
-        vol_max = 512;
-    }
+		// vol_max for the board is about 500
+		vol_max = 512;
+	}
 
     printf("Raw volume range for '%s': Min=%ld, Max=%ld\n", final_mixer_name_used, vol_min, vol_max);
 
@@ -487,7 +487,7 @@ bool load_track(int track_idx)
     open_music_file(music_files[track_idx]); // open_music_file handles its own errors/exit
 
     // Reset playback state for the new track
-    playback_paused = false;
+    playback_paused = false; 
     initialize_fir_history(); // Reset FIR history for new track
     hpf_prev_input = 0.0f;    // Reset HPF state for new track
     hpf_prev_output = 0.0f;   // Reset HPF state for new track
@@ -506,7 +506,7 @@ bool load_track(int track_idx)
         // `rate` for ALSA might differ slightly from `wav_header.sample_rate` due to `set_rate_near`.
         // It's crucial WSOLA uses the actual sample rate of the data it processes.
         // Assuming `wav_header.sample_rate` is the true rate of the file data before any ALSA adjustments.
-        if (!wsola_init(&wsola_state, wav_header.sample_rate, wav_header.num_channels,
+        if (!wsola_init(&wsola_state, wav_header.sample_rate, wav_header.num_channels, 
                         PLAYBACK_SPEED_FACTORS[current_speed_idx],
                         DEFAULT_ANALYSIS_FRAME_MS, DEFAULT_OVERLAP_PERCENTAGE, DEFAULT_SEARCH_WINDOW_MS))
         {
@@ -515,7 +515,7 @@ bool load_track(int track_idx)
     }
     else
     {
-        app_log("INFO", "New track is not S16_LE Mono. WSOLA disabled for this track. Format: %d, Channels: %d, Bits: %d",
+        app_log("INFO", "New track is not S16_LE Mono. WSOLA disabled for this track. Format: %d, Channels: %d, Bits: %d", 
                 wav_header.audio_format, wav_header.num_channels, wav_header.bits_per_sample);
         wsola_state = NULL; // Ensure it remains NULL
     }
@@ -533,7 +533,7 @@ int main(int argc, char *argv[])
 {
     int opt_char;
     // Initialize rate and pcm_format to indicate they haven't been set by user or defaults yet
-    rate = 0;
+    rate = 0; 
     pcm_format = SND_PCM_FORMAT_UNKNOWN; // Or another sentinel
 
     bool file_opened = false;
@@ -561,34 +561,34 @@ int main(int argc, char *argv[])
     {
         switch (opt_char)
         {
-        case 'm':
-            // The -m option for a single file is now less relevant if we take multiple files.
-            // We can choose to make it an error, ignore it, or treat it as one of the files.
-            // For now, let's print a warning and tell user to just list files.
-            fprintf(stderr, "Warning: -m option is deprecated for single file. List files directly after options.\n");
-            // If you still want to support -m as one of the files:
-            // if (num_music_files == 0) { // crude way to handle if no files listed yet
-            //     music_files = malloc(sizeof(char*));
-            //     music_files[0] = strdup(optarg);
-            //     num_music_files = 1;
-            // }
-            // file_opened = true; // This logic will change
-            break;
+            case 'm':
+                // The -m option for a single file is now less relevant if we take multiple files.
+                // We can choose to make it an error, ignore it, or treat it as one of the files.
+                // For now, let's print a warning and tell user to just list files.
+                fprintf(stderr, "Warning: -m option is deprecated for single file. List files directly after options.\n");
+                // If you still want to support -m as one of the files:
+                // if (num_music_files == 0) { // crude way to handle if no files listed yet
+                //     music_files = malloc(sizeof(char*));
+                //     music_files[0] = strdup(optarg);
+                //     num_music_files = 1;
+                // }
+                // file_opened = true; // This logic will change
+                break;
         case 'f':
         {
-            int format_code = atoi(optarg);
-            user_specified_format = true;
+                int format_code = atoi(optarg);
+                user_specified_format = true;
             switch (format_code)
             {
-            // Using ALSA defined enums directly is preferred if command line maps to them.
-            // If format_code is a custom code, it needs to map to these enums.
-            // For simplicity, assuming format_code might directly correspond to common patterns or a simplified set.
-            // This section needs to map user's codes to actual snd_pcm_format_t enums.
-            // Example: if user types '161' for S16_LE, map it to SND_PCM_FORMAT_S16_LE.
-            // Let's assume for now the codes are just placeholders for direct enum values if they were passed differently
-            // OR we create a mapping. The original code had magic numbers like 161.
-            // We will now map a new set of simpler codes to the ALSA enums.
-            // 1 -> S16_LE, 2 -> S16_BE, 3 -> S24_LE, 4 -> S24_BE, etc.
+                    // Using ALSA defined enums directly is preferred if command line maps to them.
+                    // If format_code is a custom code, it needs to map to these enums.
+                    // For simplicity, assuming format_code might directly correspond to common patterns or a simplified set.
+                    // This section needs to map user's codes to actual snd_pcm_format_t enums.
+                    // Example: if user types '161' for S16_LE, map it to SND_PCM_FORMAT_S16_LE.
+                    // Let's assume for now the codes are just placeholders for direct enum values if they were passed differently
+                    // OR we create a mapping. The original code had magic numbers like 161.
+                    // We will now map a new set of simpler codes to the ALSA enums.
+                    // 1 -> S16_LE, 2 -> S16_BE, 3 -> S24_LE, 4 -> S24_BE, etc.
             case 1:
                 pcm_format = SND_PCM_FORMAT_S16_LE;
                 break;
@@ -613,23 +613,23 @@ int main(int argc, char *argv[])
             case 8:
                 pcm_format = SND_PCM_FORMAT_S32_BE;
                 break;
-            default:
-                fprintf(stderr, "Unsupported format code: %d. Format will be inferred from WAV header if possible.\n", format_code);
-                fprintf(stderr, "Supported codes: 1 (S16_LE), 2 (S16_BE), 3 (S24_LE), 4 (S24_BE), 5 (S24_3LE), 6 (S24_3BE), 7 (S32_LE), 8 (S32_BE)\n");
+                    default:
+                        fprintf(stderr, "Unsupported format code: %d. Format will be inferred from WAV header if possible.\n", format_code);
+                        fprintf(stderr, "Supported codes: 1 (S16_LE), 2 (S16_BE), 3 (S24_LE), 4 (S24_BE), 5 (S24_3LE), 6 (S24_3BE), 7 (S32_LE), 8 (S32_BE)\n");
                 user_specified_format = false;       // Mark as not successfully set by user
-                pcm_format = SND_PCM_FORMAT_UNKNOWN; // Reset to unknown
-                break;
-            }
+                        pcm_format = SND_PCM_FORMAT_UNKNOWN; // Reset to unknown
+                        break;
+                }
             if (pcm_format != SND_PCM_FORMAT_UNKNOWN)
             {
-                printf("User selected format code %d: %s\n", format_code, snd_pcm_format_name(pcm_format));
+                     printf("User selected format code %d: %s\n", format_code, snd_pcm_format_name(pcm_format));
+                }
+                break;
             }
-            break;
-        }
         case 'r':
         {
-            int rate_code = atoi(optarg);
-            user_specified_rate = true;
+                int rate_code = atoi(optarg);
+                user_specified_rate = true;
             if (rate_code == 44)
             {
                 rate = 44100;
@@ -648,47 +648,47 @@ int main(int argc, char *argv[])
             }
             else
             {
-                fprintf(stderr, "Unsupported rate code: %d. Try to use WAV header rate.\n", rate_code);
-                user_specified_rate = false; // Mark as not successfully set by user
+                    fprintf(stderr, "Unsupported rate code: %d. Try to use WAV header rate.\n", rate_code);
+                    user_specified_rate = false; // Mark as not successfully set by user
                 rate = 0;                    // Reset rate
-            }
+                }
             if (rate != 0)
             {
-                printf("User selected rate: %u Hz\n", rate);
+                    printf("User selected rate: %u Hz\n", rate);
+                }
+                break;
             }
-            break;
-        }
         case 'd':
         {
-            int device = atoi(optarg);
+				int device = atoi(optarg);
             if (device)
             {
-                USR_BOARD_SPEAKER_MAX = false;
-                printf("Using external sound output device");
+					USR_BOARD_SPEAKER_MAX = false;
+					printf("Using external sound output device");
             }
             else
             {
-                printf("Using default sound output device");
-            }
-            break;
-        }
+					printf("Using default sound output device");
+				}
+				break;
+			}
         case 's':
         {
-            int speed_method = atoi(optarg);
+                int speed_method = atoi(optarg);
             if (speed_method == 0)
             {
-                use_wsola_for_speed_control = false;
-                printf("Using simple seek-based speed control (changes pitch)\n");
+                    use_wsola_for_speed_control = false;
+                    printf("Using simple seek-based speed control (changes pitch)\n");
             }
             else
             {
-                use_wsola_for_speed_control = true;
-                printf("Using WSOLA pitch-preserving speed control\n");
+                    use_wsola_for_speed_control = true;
+                    printf("Using WSOLA pitch-preserving speed control\n");
+                }
+                break;
             }
-            break;
-        }
-        default:
-            exit(EXIT_FAILURE);
+            default:
+                exit(EXIT_FAILURE);
         }
     }
 
@@ -709,9 +709,9 @@ int main(int argc, char *argv[])
         current_track_idx = 0; // Start with the first file in the list
         if (!load_track(current_track_idx))
         {
-            // load_track calls open_music_file which exits on failure,
-            // but if load_track itself fails (e.g. bad index, though not here), handle it.
-            exit(EXIT_FAILURE);
+             // load_track calls open_music_file which exits on failure, 
+             // but if load_track itself fails (e.g. bad index, though not here), handle it.
+             exit(EXIT_FAILURE); 
         }
         file_opened = true; // Mark that we have at least one file to play
     }
@@ -759,10 +759,10 @@ int main(int argc, char *argv[])
         case 32:
             pcm_format = SND_PCM_FORMAT_S32_LE;
             break; // Common for 32-bit
-        default:
-            fprintf(stderr, "Error: Unsupported bits_per_sample in WAV header (%d) and format not specified by user.\n", wav_header.bits_per_sample);
-            fprintf(stderr, "Please specify a format using -f option.\n");
-            exit(EXIT_FAILURE);
+            default:
+                fprintf(stderr, "Error: Unsupported bits_per_sample in WAV header (%d) and format not specified by user.\n", wav_header.bits_per_sample);
+                fprintf(stderr, "Please specify a format using -f option.\n");
+                exit(EXIT_FAILURE);
         }
         printf("Inferred PCM format: %s\n", snd_pcm_format_name(pcm_format));
     }
@@ -774,11 +774,11 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    // --- Initialize WSOLA ---
+    // --- Initialize WSOLA --- 
     // WSOLA currently supports S16_LE Mono only.
     if (pcm_format == SND_PCM_FORMAT_S16_LE && wav_header.num_channels == 1)
     {
-        if (!wsola_init(&wsola_state, rate, wav_header.num_channels,
+        if (!wsola_init(&wsola_state, rate, wav_header.num_channels, 
                         PLAYBACK_SPEED_FACTORS[current_speed_idx],
                         DEFAULT_ANALYSIS_FRAME_MS, DEFAULT_OVERLAP_PERCENTAGE, DEFAULT_SEARCH_WINDOW_MS))
         {
@@ -798,7 +798,7 @@ int main(int argc, char *argv[])
     debug_msg(snd_pcm_hw_params_any(pcm_handle, hw_params), "配置空间初始化");
     debug_msg(snd_pcm_hw_params_set_access(pcm_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED), "设置交错模式");
     debug_msg(snd_pcm_hw_params_set_format(pcm_handle, hw_params, pcm_format), "设置样本格式");
-
+    
     unsigned int actual_rate_from_alsa = rate;
     debug_msg(snd_pcm_hw_params_set_rate_near(pcm_handle, hw_params, &actual_rate_from_alsa, 0), "设置采样率");
     if (rate != actual_rate_from_alsa)
@@ -824,7 +824,7 @@ int main(int argc, char *argv[])
     frames = buffer_size / wav_header.block_align;
     debug_msg(snd_pcm_hw_params_set_buffer_size_near(pcm_handle, hw_params, &frames), "设置缓冲区大小");
     debug_msg(snd_pcm_hw_params_set_period_size_near(pcm_handle, hw_params, &local_period_size_frames, 0), "设置周期大小");
-
+    
     snd_pcm_hw_params_get_period_size(hw_params, &local_period_size_frames, 0);
     snd_pcm_hw_params_get_buffer_size(hw_params, &frames);
     // printf("ALSA Actual period size: %lu frames, ALSA Actual buffer size: %lu frames\n", local_period_size_frames, frames);
@@ -838,7 +838,7 @@ int main(int argc, char *argv[])
     snd_pcm_hw_params_get_format(hw_params, &actual_format);
     snd_pcm_hw_params_get_rate(hw_params, &actual_rate_check, 0);
     snd_pcm_hw_params_get_channels(hw_params, &actual_channels_check);
-    printf("ALSA Configured - Format: %s (%d), Rate: %u Hz, Channels: %u\n",
+    printf("ALSA Configured - Format: %s (%d), Rate: %u Hz, Channels: %u\n", 
            snd_pcm_format_name(actual_format), actual_format, actual_rate_check, actual_channels_check);
     if (actual_format == SND_PCM_FORMAT_UNKNOWN)
     {
@@ -1136,7 +1136,7 @@ int main(int argc, char *argv[])
         if (read_ret == 0)
         {
             app_log("INFO", "End of music file input! (fread returned 0)");
-            // --- Autoplay Next Track ---
+            // --- Autoplay Next Track --- 
             if (num_music_files > 1 && current_track_idx < num_music_files - 1)
             {
                 current_track_idx++;
@@ -1154,12 +1154,12 @@ int main(int argc, char *argv[])
             }
             else if (num_music_files > 1 && current_track_idx == num_music_files - 1)
             {
-                app_log("INFO", "End of playlist.");
-                break;
+                 app_log("INFO", "End of playlist.");
+                 break;
             }
             else
             {
-                break; // Single file or last file in playlist ended
+                 break; // Single file or last file in playlist ended
             }
         }
         if (read_ret < 0)
@@ -1170,7 +1170,7 @@ int main(int argc, char *argv[])
         }
 
         snd_pcm_uframes_t frames_read_this_iteration = read_ret / wav_header.block_align;
-
+        
         if (frames_read_this_iteration == 0)
         {
             if (read_ret > 0)
@@ -1210,17 +1210,17 @@ int main(int argc, char *argv[])
         short *source_buffer_for_speed_change_s16 = (eq_processed_audio_buffer_s16_this_iter != NULL) ? eq_processed_audio_buffer_s16_this_iter : (short *)buff;
         int num_source_samples_for_speed_change = num_samples_in_buff;
 
-        // --- WSOLA / Speed Change Logic ---
+        // --- WSOLA / Speed Change Logic --- 
         // WSOLA is used when:
         // 1. use_wsola_for_speed_control is true
         // 2. The WSOLA state exists (initialized successfully)
         // 3. Format is S16_LE mono (supported format)
         // 4. Speed is not 1.0x (no need to process for normal speed)
-        bool use_wsola = (use_wsola_for_speed_control &&
-                          wsola_state != NULL &&
-                          pcm_format == SND_PCM_FORMAT_S16_LE &&
-                          wav_header.num_channels == 1 &&
-                          fabs(current_speed - 1.0) >= 1e-6);
+        bool use_wsola = (use_wsola_for_speed_control && 
+                         wsola_state != NULL && 
+                         pcm_format == SND_PCM_FORMAT_S16_LE && 
+                         wav_header.num_channels == 1 &&
+                         fabs(current_speed - 1.0) >= 1e-6);
 
         if (use_wsola)
         {
@@ -1240,10 +1240,10 @@ int main(int argc, char *argv[])
             else
             {
                 int wsola_output_count_samples = wsola_process(wsola_state,
-                                                               source_buffer_for_speed_change_s16,
-                                                               num_source_samples_for_speed_change,
+                                                       source_buffer_for_speed_change_s16, 
+                                                       num_source_samples_for_speed_change, 
                                                                resampled_audio_buffer_s16_this_iter,
-                                                               max_wsola_output_samples);
+                                                       max_wsola_output_samples);
                 if (wsola_output_count_samples > 0)
                 {
                     buffer_for_alsa = (unsigned char *)resampled_audio_buffer_s16_this_iter;
@@ -1262,7 +1262,7 @@ int main(int argc, char *argv[])
                 }
             }
         }
-
+        
         // Fallback to simple speed change if WSOLA not used or failed for this chunk
         if (!buffer_for_alsa_is_resampled_output)
         { // if WSOLA didn't set the buffer
@@ -1271,10 +1271,10 @@ int main(int argc, char *argv[])
                 buffer_for_alsa = (unsigned char *)source_buffer_for_speed_change_s16; // Points to eq_output or buff
                 frames_for_alsa = frames_read_this_iteration;
                 buffer_for_alsa_is_resampled_output = false; // Not from dedicated speed resampling malloc
-            }
+                }
             else
             { // Simple pitch-changing speed adjustment
-                int target_num_output_samples = (int)round((double)num_source_samples_for_speed_change / current_speed);
+            int target_num_output_samples = (int)round((double)num_source_samples_for_speed_change / current_speed);
                 if (target_num_output_samples > 0)
                 {
                     size_t resampled_buffer_size_bytes = target_num_output_samples * sizeof(short);
@@ -1310,28 +1310,28 @@ int main(int argc, char *argv[])
                     {
                         app_log("ERROR", "Failed to allocate memory for simple speed-adjusted buffer. Playing normal for this chunk.");
                         buffer_for_alsa = (unsigned char *)source_buffer_for_speed_change_s16;
-                        frames_for_alsa = frames_read_this_iteration;
+                    frames_for_alsa = frames_read_this_iteration;
                         buffer_for_alsa_is_resampled_output = false;
                     }
                     else
                     {
                         // ... (Simple speed resampling logic fills resampled_audio_buffer_s16_this_iter) ...
                         // This is copied from existing code, ensure it correctly populates resampled_audio_buffer_s16_this_iter
-                        double input_sample_cursor = 0.0;
-                        int actual_output_samples_generated = 0;
+                    double input_sample_cursor = 0.0;
+                    int actual_output_samples_generated = 0;
                         for (int out_sample_num = 0; out_sample_num < target_num_output_samples; ++out_sample_num)
                         {
-                            int input_sample_to_sample_idx = (int)floor(input_sample_cursor);
+                        int input_sample_to_sample_idx = (int)floor(input_sample_cursor);
                             if (input_sample_to_sample_idx >= num_source_samples_for_speed_change)
                             {
                                 target_num_output_samples = actual_output_samples_generated; // Adjust target
-                                break;
-                            }
-                            resampled_audio_buffer_s16_this_iter[actual_output_samples_generated] =
-                                source_buffer_for_speed_change_s16[input_sample_to_sample_idx];
-                            actual_output_samples_generated++;
-                            input_sample_cursor += current_speed;
+                            break;
                         }
+                            resampled_audio_buffer_s16_this_iter[actual_output_samples_generated] =
+                            source_buffer_for_speed_change_s16[input_sample_to_sample_idx];
+                        actual_output_samples_generated++;
+                        input_sample_cursor += current_speed;
+                    }
                         frames_for_alsa = actual_output_samples_generated / wav_header.num_channels;
 
                         if (frames_for_alsa > 0)
@@ -1349,7 +1349,7 @@ int main(int argc, char *argv[])
                 }
                 else
                 { // target_num_output_samples is 0
-                    frames_for_alsa = 0;
+                frames_for_alsa = 0;
                     buffer_for_alsa_is_resampled_output = false;
                 }
             }
@@ -1476,7 +1476,7 @@ int main(int argc, char *argv[])
                             free(resampled_audio_buffer_s16_this_iter);
                             resampled_audio_buffer_s16_this_iter = NULL;
                         }
-                        goto playback_end;
+                        goto playback_end; 
                     }
                 }
                 else
@@ -1522,46 +1522,6 @@ int main(int argc, char *argv[])
             app_log("INFO", "End of music file (partial buffer read). This was the last chunk.");
             break;
         }
-
-        // --- Diagnostic Log for OLA boundary ---
-        static long frameNo = 0; // Needs to be static to persist across calls if wsola_process is called multiple times per "frame" from main loop
-                                 // Or, if wsola_process itself loops internally for multiple output hops, this is fine.
-                                 // Given the wsola_process structure, it processes as many hops as possible per call.
-        if (frameNo < 100) {   // Increased log lines slightly for more data
-            if (N_o > 0) { // Ensure N_o is positive to avoid array out of bounds
-                short old0 = state->output_overlap_add_buffer[0];
-                short new0 = state->current_synthesis_segment[0];
-                // The sum here is before clipping in the OLA loop.
-                // For more accurate comparison to what's output,
-                // we should consider the sum as it was calculated in the loop.
-                // However, for an off-by-one, old0 vs new0 is the key.
-                long sum0_raw = (long)old0 + (long)new0; // Use long to avoid overflow before observing
-                app_log("OLA_DBG","Frame %ld: old[0]=%d, new_head[0]=%d, raw_sum[0]=%ld. Output sample for this pos was: %d",
-                        frameNo,
-                        old0,
-                        new0,
-                        sum0_raw,
-                        output_buffer[output_samples_written - N_o] // First sample of the OLA block just written
-                       );
-
-                if (N_o > 1) { // Log one more sample if possible for context
-                     short old1 = state->output_overlap_add_buffer[1];
-                     short new1 = state->current_synthesis_segment[1];
-                     long sum1_raw = (long)old1 + (long)new1;
-                     app_log("OLA_DBG","Frame %ld: old[1]=%d, new_head[1]=%d, raw_sum[1]=%ld. Output sample for this pos was: %d",
-                        frameNo,
-                        old1,
-                        new1,
-                        sum1_raw,
-                        output_buffer[output_samples_written - N_o + 1]
-                       );
-                }
-            } else {
-                app_log("OLA_DBG", "Frame %ld: N_o is 0, cannot log boundary samples.", frameNo);
-            }
-        }
-        frameNo++;
-        // --- End Diagnostic Log ---
     }
 
 playback_end:
@@ -1618,7 +1578,7 @@ static void wsola_add_input_to_ring_buffer(WSOLA_State *state, const short *inpu
             app_log("WARNING", "WSOLA input ring buffer full. Overwriting oldest sample.");
             state->input_buffer_read_pos = (state->input_buffer_read_pos + 1) % state->input_buffer_capacity;
             state->input_ring_buffer_stream_start_offset++;
-            state->input_buffer_content--;
+            state->input_buffer_content--; 
         }
         state->input_buffer_ring[state->input_buffer_write_pos] = input_samples[i];
         state->input_buffer_write_pos = (state->input_buffer_write_pos + 1) % state->input_buffer_capacity;
@@ -1677,7 +1637,7 @@ static float calculate_normalized_cross_correlation(const short *segment1, const
     if (segment1 == NULL || segment2 == NULL || length <= 0)
     {
         app_log("ERROR", "NCC: Invalid arguments (NULL segments or zero/negative length: %d)", length);
-        return 0.0f;
+        return 0.0f; 
     }
 
     // Use double precision for better accuracy
@@ -1705,7 +1665,7 @@ static float calculate_normalized_cross_correlation(const short *segment1, const
             segments_identical = false;
         }
     }
-
+    
     // If segments are truly identical and not just silence, still allow a high but not perfect correlation
     if (segments_identical)
     {
@@ -1731,7 +1691,7 @@ static float calculate_normalized_cross_correlation(const short *segment1, const
         // Samples are mean-centered
         double s1 = (segment1[i] - mean1);
         double s2 = (segment2[i] - mean2);
-
+        
         // Calculate correlation components
         sum_s1s2 += s1 * s2;
         sum_s1_sq += s1 * s1;
@@ -1751,26 +1711,26 @@ static float calculate_normalized_cross_correlation(const short *segment1, const
     {
         return 0.0f;
     }
-
+    
     double correlation = sum_s1s2 / denominator;
-
+    
     // Clamp to valid range
     if (correlation > 1.0)
         correlation = 1.0;
     if (correlation < -1.0)
         correlation = -1.0;
-
+    
     // Energy balancing: Apply stronger penalty for energy imbalance
-    // This is especially important for audio where one segment might be
+    // This is especially important for audio where one segment might be 
     // much louder than another but still have similar shape
     double energy_ratio = (sum_s1_sq < sum_s2_sq) ? sum_s1_sq / sum_s2_sq : sum_s2_sq / sum_s1_sq;
-
+    
     // For severe energy imbalance (one segment much louder than other)
     if (energy_ratio < 0.3)
     {
         correlation *= sqrtf(energy_ratio); // Softened penalty
     }
-
+    
     return (float)correlation;
 }
 
@@ -1816,13 +1776,13 @@ static long long find_best_match_segment(
 
     int N_o = state->overlap_samples;
     int S_w = state->search_window_samples;
-
+    
     // Static variables to maintain consistency between frames
     // Important for audio to avoid perceptual discontinuities
     static int previous_best_offset = 0;
     static float previous_correlation = 0.0f;
     static int consecutive_low_correlations = 0;
-
+    
     // Allocate a temporary buffer for candidate segments from the ring buffer
     short *candidate_segment = (short *)malloc(N_o * sizeof(short));
     if (!candidate_segment)
@@ -1852,7 +1812,7 @@ static long long find_best_match_segment(
             previous_best_offset = 0;
             previous_correlation = 0.9999f;
         }
-    }
+    } 
     else if (S_w <= 0)
     {
         // No search window case - just analyze the ideal position
@@ -1866,19 +1826,19 @@ static long long find_best_match_segment(
         }
         else
         {
-            app_log("WARNING", "find_best_match: Could not get segment at ideal_search_center_ring_idx %d",
-                    ideal_search_center_ring_idx);
+            app_log("WARNING", "find_best_match: Could not get segment at ideal_search_center_ring_idx %d", 
+                   ideal_search_center_ring_idx);
         }
-    }
+    } 
     else
     {
         // Adaptive multi-resolution search with improved oscillation prevention
-
+        
         // Step 1: Coarse search with variable step size
         int step_size = MAX(1, S_w / 10); // More fine-grained initial search (was S_w/8)
         int coarse_best_offset = 0;
         float coarse_max_correlation = -1.0f;
-
+        
         // Bias search range toward previous successful offsets for stability
         // but still explore the entire range to avoid getting stuck
         for (int offset = -S_w; offset <= S_w; offset += step_size)
@@ -1899,16 +1859,16 @@ static long long find_best_match_segment(
                 long long val_ll = (long long)candidate_segment[k] * state->analysis_window_function[k];
                 windowed_candidate_for_ncc[k] = (short)(val_ll >> 15);
             }
-
+            
             float corr = calculate_normalized_cross_correlation(
                 target_segment_for_comparison, windowed_candidate_for_ncc, N_o);
-
+            
             // Progressive continuity bias - stronger for offsets closer to previous match
             // and when previous correlation was strong
             float continuity_factor = fabsf((float)(offset - previous_best_offset)) / (float)S_w;
             float continuity_bias = 0.0f;
-
-            // Apply stronger continuity bias when last match was good
+            
+            // Apply stronger continuity bias when last match was good 
             if (previous_correlation > 0.7f)
             {
                 // Exponential bias that drops off quickly as we move away from previous offset
@@ -1919,11 +1879,11 @@ static long long find_best_match_segment(
                 // Weaker linear bias when previous match quality was poor
                 continuity_bias = 0.04f * (1.0f - continuity_factor);
             }
-
+            
             corr += continuity_bias;
             if (corr > 1.0f)
                 corr = 1.0f;
-
+            
             if (corr > coarse_max_correlation)
             {
                 coarse_max_correlation = corr;
@@ -1931,17 +1891,17 @@ static long long find_best_match_segment(
                 match_found = true;
             }
         }
-
+        
         // Step 2: Enhanced fine search with adaptive range
         if (match_found)
         {
             // Adapt fine search range based on coarse correlation quality
             int search_range = (coarse_max_correlation > 0.8f) ? (step_size + 2) : // Narrow range for good matches
                                    (2 * step_size);                                // Wider range for poorer matches
-
+            
             int fine_search_min = MAX(-S_w, coarse_best_offset - search_range);
             int fine_search_max = MIN(S_w, coarse_best_offset + search_range);
-
+            
             // Fine search step size - always 1 for best precision
             for (int offset = fine_search_min; offset <= fine_search_max; offset++)
             {
@@ -1950,9 +1910,9 @@ static long long find_best_match_segment(
                 {
                     continue;
                 }
-
+                
                 int candidate_idx = (ideal_search_center_ring_idx + offset + state->input_buffer_capacity) % state->input_buffer_capacity;
-
+                
                 if (!get_segment_from_ring_buffer(state, candidate_idx, N_o, candidate_segment))
                 {
                     continue;
@@ -1965,18 +1925,18 @@ static long long find_best_match_segment(
                     long long val_ll = (long long)candidate_segment[k] * state->analysis_window_function[k];
                     windowed_candidate_for_ncc_fine[k] = (short)(val_ll >> 15);
                 }
-
+                
                 float corr = calculate_normalized_cross_correlation(
                     target_segment_for_comparison, windowed_candidate_for_ncc_fine, N_o);
-
+                
                 // Fine search gets a smaller continuity bias
                 float continuity_factor = fabsf((float)(offset - previous_best_offset)) / (float)S_w;
                 float continuity_bias = 0.02f * (1.0f - continuity_factor);
                 corr += continuity_bias;
-
+                
                 if (corr > 1.0f)
                     corr = 1.0f;
-
+                
                 if (corr > max_correlation_float)
                 {
                     max_correlation_float = corr;
@@ -1986,37 +1946,37 @@ static long long find_best_match_segment(
             }
         }
     }
-
+    
     // Enhanced handling of low correlations
     if (!match_found || max_correlation_float < 0.1f)
     {
         consecutive_low_correlations++;
-
+        
         // With multiple consecutive poor matches, implement a smooth fallback strategy
         if (consecutive_low_correlations > 2)
         {
             // After a few failures, use a weighted average of previous offset
-            // and a small random component to maintain some variation while
+            // and a small random component to maintain some variation while 
             // preventing large jumps
             int constrained_offset;
-
+            
             if (consecutive_low_correlations < 5)
             {
                 // Phase 1: Gradual transition toward previous offset
-                constrained_offset = ((*best_segment_start_offset_from_ideal_center_ptr * 1) +
+                constrained_offset = ((*best_segment_start_offset_from_ideal_center_ptr * 1) + 
                                       (previous_best_offset * 3)) /
                                      4;
             }
             else
             {
                 // Phase 2: Strong constraint to small variations around previous offset
-                // Limit to +/- 10% of search window
+                // Limit to +/- 10% of search window 
                 int variation_limit = MAX(1, S_w / 10);
                 int min_offset = MAX(-S_w, previous_best_offset - variation_limit);
                 int max_offset = MIN(S_w, previous_best_offset + variation_limit);
-
+                
                 constrained_offset = previous_best_offset;
-
+                
                 // Try a few positions around the previous offset
                 float best_emergency_corr = -1.0f;
                 for (int test_offset = min_offset; test_offset <= max_offset; test_offset += MAX(1, variation_limit / 2))
@@ -2027,7 +1987,7 @@ static long long find_best_match_segment(
                     {
                         float test_corr = calculate_normalized_cross_correlation(
                             target_segment_for_comparison, candidate_segment, N_o);
-
+                        
                         if (test_corr > best_emergency_corr)
                         {
                             best_emergency_corr = test_corr;
@@ -2036,14 +1996,14 @@ static long long find_best_match_segment(
                     }
                 }
             }
-
-            app_log("DEBUG", "find_best_match: Very low correlation (%.4f). Strong smoothing: %d -> %d",
-                    max_correlation_float,
-                    *best_segment_start_offset_from_ideal_center_ptr,
-                    constrained_offset);
-
+            
+            app_log("DEBUG", "find_best_match: Very low correlation (%.4f). Strong smoothing: %d -> %d", 
+                   max_correlation_float, 
+                   *best_segment_start_offset_from_ideal_center_ptr, 
+                   constrained_offset);
+                   
             *best_segment_start_offset_from_ideal_center_ptr = constrained_offset;
-
+            
             // The following lines artificially inflated the correlation.
             // We are removing this to allow the actual low correlation to propagate
             // to previous_correlation for the next frame.
@@ -2055,35 +2015,35 @@ static long long find_best_match_segment(
     {
         consecutive_low_correlations = 0; // Reset counter with successful match
     }
-
+    
     // Protect against extreme jumps that cause perceptual discontinuities
     if (previous_correlation > 0.7f && max_correlation_float > 0.1f)
     {
         int max_allowed_jump = S_w / 2; // Limit maximum frame-to-frame jump
-
+        
         if (abs(*best_segment_start_offset_from_ideal_center_ptr - previous_best_offset) > max_allowed_jump)
         {
             // Smooth the transition by moving only partway toward the new offset
-            int smoothed_offset = previous_best_offset +
-                                  ((*best_segment_start_offset_from_ideal_center_ptr - previous_best_offset) / 2);
-
-            app_log("DEBUG", "find_best_match: Large offset jump smoothed: %d -> %d",
-                    *best_segment_start_offset_from_ideal_center_ptr, smoothed_offset);
-
+            int smoothed_offset = previous_best_offset + 
+                                 ((*best_segment_start_offset_from_ideal_center_ptr - previous_best_offset) / 2);
+            
+            app_log("DEBUG", "find_best_match: Large offset jump smoothed: %d -> %d", 
+                   *best_segment_start_offset_from_ideal_center_ptr, smoothed_offset);
+                   
             *best_segment_start_offset_from_ideal_center_ptr = smoothed_offset;
         }
     }
-
+    
     // Free the temporary buffer
     free(candidate_segment);
-
-    app_log("DEBUG", "find_best_match: Final offset=%d, Correlation=%.4f, ConsecLowCorr=%d",
-            *best_segment_start_offset_from_ideal_center_ptr, max_correlation_float, consecutive_low_correlations);
-
+    
+    app_log("DEBUG", "find_best_match: Final offset=%d, Correlation=%.4f, ConsecLowCorr=%d", 
+           *best_segment_start_offset_from_ideal_center_ptr, max_correlation_float, consecutive_low_correlations);
+    
     // Update for next call
     previous_best_offset = *best_segment_start_offset_from_ideal_center_ptr;
     previous_correlation = max_correlation_float;
-
+    
     return max_correlation;
 }
 
@@ -2119,7 +2079,7 @@ bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_a
         free(s);
         return false;
     }
-
+    
     // For now, WSOLA implementation will be mono. Stereo needs interleaved processing or dual states.
     if (num_channels_arg != 1)
     {
@@ -2141,7 +2101,7 @@ bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_a
         s->overlap_samples = 1;
 
     s->analysis_hop_samples = s->analysis_frame_samples - s->overlap_samples; // Nominal input hop at 1x speed (will be N/2)
-
+    
     // Synthesis hop depends on speed factor and should be adjusted based on playback speed
     // For slower speeds (< 1.0), synthesis_hop > analysis_hop
     // For faster speeds (> 1.0), synthesis_hop < analysis_hop
@@ -2152,7 +2112,7 @@ bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_a
 
     if (s->analysis_frame_samples <= 0 || s->overlap_samples < 0 || s->analysis_hop_samples <= 0)
     {
-        app_log("ERROR", "wsola_init: Invalid derived frame/hop sizes (N=%d, No=%d, Ha=%d). Check frame_ms and overlap percentage.",
+         app_log("ERROR", "wsola_init: Invalid derived frame/hop sizes (N=%d, No=%d, Ha=%d). Check frame_ms and overlap percentage.",
                 s->analysis_frame_samples, s->overlap_samples, s->analysis_hop_samples);
         free(s);
         return false;
@@ -2176,7 +2136,7 @@ bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_a
     generate_hann_window_q15(s->analysis_window_function, s->analysis_frame_samples);
 
     // Input ring buffer capacity calculation:
-    // It needs to hold at least one full input chunk from the main app,
+    // It needs to hold at least one full input chunk from the main app, 
     // plus enough room for WSOLA to analyze (N samples) and search (2*S_w samples)
     // from data that might already be there or is part of the new chunk.
     // A common input chunk size (num_samples_in_buff) is around 12288 for 24KB S16LE mono.
@@ -2191,7 +2151,7 @@ bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_a
     // A robust size would be: typical_input_chunk_from_fread + N + 2*S_w.
     // For now, let's set a larger fixed minimum based on MAX_WSOLA_FRAME_SAMPLES, and ensure it's larger than typical input chunk.
     int estimated_max_input_chunk = (1024 * 2 * 20) / 2;                                                                 // e.g. period_size (12k) * periods (2) / bytes_per_sample -> 12k * 2 / 2 = 12k. Let's assume up to 20k samples as a generous typical chunk.
-                                                                                                                         // BUF_LEN is 1024. period_size is 12*1024. buffer_size (for fread) is period_size * periods = 24KB
+                                                        // BUF_LEN is 1024. period_size is 12*1024. buffer_size (for fread) is period_size * periods = 24KB
     int samples_from_main_fread = (period_size * periods) / (s->sample_rate > 0 ? (wav_header.bits_per_sample / 8) : 2); // Calculate based on actual period_size
     if (samples_from_main_fread == 0 && s->sample_rate > 0)
         samples_from_main_fread = (12288 * 2) / (wav_header.bits_per_sample / 8); // Fallback if period_size not set yet or similar, assume 12k*2 bytes
@@ -2199,10 +2159,10 @@ bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_a
         samples_from_main_fread = 12288; // Default if all else fails
 
     s->input_buffer_capacity = samples_from_main_fread + s->analysis_frame_samples + (2 * s->search_window_samples) + 1024; // Generous buffer
-
-    // The old logic using MAX_WSOLA_FRAME_SAMPLES:
-    // s->input_buffer_capacity = s->analysis_frame_samples + (2 * s->search_window_samples) + s->analysis_frame_samples;
-    // if (s->input_buffer_capacity < MAX_WSOLA_FRAME_SAMPLES * 2) {
+    
+    // The old logic using MAX_WSOLA_FRAME_SAMPLES: 
+    // s->input_buffer_capacity = s->analysis_frame_samples + (2 * s->search_window_samples) + s->analysis_frame_samples; 
+    // if (s->input_buffer_capacity < MAX_WSOLA_FRAME_SAMPLES * 2) { 
     //     s->input_buffer_capacity = MAX_WSOLA_FRAME_SAMPLES * 2;
     // }
 
@@ -2233,7 +2193,7 @@ bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_a
         wsola_destroy(&s);
         return false;
     }
-
+    
     s->total_input_samples_processed = 0;
     s->total_output_samples_generated = 0;
     s->next_ideal_input_frame_start_sample_offset = 0; // Start at the beginning of the stream
@@ -2264,7 +2224,7 @@ void wsola_destroy(WSOLA_State **state_ptr)
 // Main WSOLA processing function
 // Takes num_input_samples, processes them, and puts time-scaled samples into output_buffer.
 // Returns the number of samples written to output_buffer.
-int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_samples,
+int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_samples, 
                   short *output_buffer, int max_output_samples)
 {
     if (!state || !output_buffer || max_output_samples <= 0)
@@ -2312,19 +2272,19 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         if (latest_available_stream_offset_for_loop_check < latest_required_stream_offset_for_loop_check)
         {
             DBG("WSOLA_LOOP_BREAK_NO_DATA: iter=%d, avail=%lld, req=%lld. Output written so far: %d", loop_iterations, latest_available_stream_offset_for_loop_check, latest_required_stream_offset_for_loop_check, output_samples_written);
-            break;
+            break; 
         }
 
         // Determine the ring buffer index for the center of our search.
         // This corresponds to where `state->next_ideal_input_frame_start_sample_offset` falls in the current ring.
-        int ideal_search_center_ring_idx =
+        int ideal_search_center_ring_idx = 
             (int)((state->next_ideal_input_frame_start_sample_offset - state->input_ring_buffer_stream_start_offset + state->input_buffer_capacity)) % state->input_buffer_capacity;
 
         int best_offset_from_ideal_center = 0;
-        long long correlation = find_best_match_segment(state,
-                                                        state->output_overlap_add_buffer,
-                                                        ideal_search_center_ring_idx,
-                                                        &best_offset_from_ideal_center);
+        long long correlation = find_best_match_segment(state, 
+                                                state->output_overlap_add_buffer, 
+                                                ideal_search_center_ring_idx, 
+                                                &best_offset_from_ideal_center);
 
         // Check if find_best_match_segment indicated an error or no valid segment found
         if (correlation == -LLONG_MAX)
@@ -2343,19 +2303,19 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         }
 
         // Actual start of the N-sample synthesis segment in the ring buffer
-        int actual_synthesis_segment_start_ring_idx =
+        int actual_synthesis_segment_start_ring_idx = 
             (ideal_search_center_ring_idx + best_offset_from_ideal_center + state->input_buffer_capacity) % state->input_buffer_capacity;
 
         // Extract the N-sample segment into state->current_synthesis_segment
         if (!get_segment_from_ring_buffer(state, actual_synthesis_segment_start_ring_idx, N, state->current_synthesis_segment))
         {
             app_log("ERROR", "WSOLA: Failed to get synthesis segment from ring buffer. Skipping frame.");
-            break;
+            break; 
         }
 
         // Apply the Q15 Sine analysis window to the entire current_synthesis_segment (N samples).
-        for (int i = 0; i < N; ++i) {
-            long long val_ll = (long long)state->current_synthesis_segment[i] * state->analysis_window_function[i];
+            for (int i = 0; i < N; ++i) {
+                long long val_ll = (long long)state->current_synthesis_segment[i] * state->analysis_window_function[i];
             state->current_synthesis_segment[i] = (short)(val_ll >> 15);
         }
 
@@ -2365,17 +2325,16 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         // --- Overlap-Add with Direct Summation ---
         // The first frame special handling is not strictly necessary with direct sum
         // if output_overlap_add_buffer is initialized to zero.
-        // if (state->total_output_samples_generated == 0)
-        // {
-        //     /* first ever frame – just copy, no ramp */
-        //     memcpy(output_buffer + output_samples_written,
-        //            state->current_synthesis_segment,
-        //            N_o * sizeof(short));
-        //     output_samples_written += N_o;
-        //     // samples_written_this_frame_ola = N_o; // No longer needed
-        // }
-        // else
-        // { // This 'else' is removed
+        if (state->total_output_samples_generated == 0)
+        {
+            /* first ever frame – just copy, no ramp */
+            memcpy(output_buffer + output_samples_written,
+                   state->current_synthesis_segment,
+                   N_o * sizeof(short));
+            output_samples_written += N_o;
+        }
+        else
+        {
             for (int i = 0; i < N_o; ++i)
             {
                 // Direct sum of older tail and new head
@@ -2391,9 +2350,26 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
                     s_ola_s16 = (short)s_ola_ll;
 
                 output_buffer[output_samples_written++] = s_ola_s16;
-                // samples_written_this_frame_ola++; // No longer needed
             }
-        // } // This 'else' closing brace is removed
+        }
+
+        // --- Debugging log for OLA boundary ---
+        static long frameNo = 0;
+        if (frameNo < 10) {   // only spam the log a little
+            if (N_o > 0) { // Ensure N_o is positive to prevent reading out of bounds
+                short old0 = state->output_overlap_add_buffer[0];
+                short new0 = state->current_synthesis_segment[0];
+                // Ensure intermediate sum is long long to avoid overflow before clamping
+                long long sum0_ll = (long long)old0 + (long long)new0;
+                short sum0_s16 = (sum0_ll > 32767) ? 32767 : (sum0_ll < -32768) ? -32768 : (short)sum0_ll;
+
+                app_log("DBG_OLA","%ld: old0=%d new0=%d sum0_calc=%d (raw_ll=%lld)", frameNo, old0, new0, sum0_s16, sum0_ll);
+            } else {
+                 app_log("DBG_OLA","%ld: N_o is %d, cannot log OLA samples.", frameNo, N_o);
+            }
+        }
+        frameNo++;
+        // --- End Debugging log ---
 
         // Update the output_overlap_add_buffer with the tail (second half) of the current *windowed* synthesis segment
         if (N_o > 0)
@@ -2407,7 +2383,7 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         state->total_input_samples_processed = state->next_ideal_input_frame_start_sample_offset; // Approximation
 
         // Discard old data from ring buffer (logic for this remains the same)
-        long long min_retainable_abs_offset = state->next_ideal_input_frame_start_sample_offset - state->search_window_samples - N_o;
+        long long min_retainable_abs_offset = state->next_ideal_input_frame_start_sample_offset - state->search_window_samples - N_o; 
         if (min_retainable_abs_offset < 0)
             min_retainable_abs_offset = 0;
 
@@ -2417,32 +2393,32 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         {
             samples_to_discard = (int)(min_retainable_abs_offset - current_ring_start_abs_offset);
         }
-        app_log("DEBUG", "WSOLA_DISCARD_CHECK: iter=%d, min_retain_abs=%lld, ring_start_abs=%lld, content_before=%d, samples_to_discard_calc=%d",
-                loop_iterations, min_retainable_abs_offset, current_ring_start_abs_offset, state->input_buffer_content, samples_to_discard);
+        app_log("DEBUG", "WSOLA_DISCARD_CHECK: iter=%d, min_retain_abs=%lld, ring_start_abs=%lld, content_before=%d, samples_to_discard_calc=%d", 
+           loop_iterations, min_retainable_abs_offset, current_ring_start_abs_offset, state->input_buffer_content, samples_to_discard);
 
         if (samples_to_discard > 0)
         {
             if (samples_to_discard > state->input_buffer_content)
             {
                 app_log("WARNING", "WSOLA_DISCARD: Attempting to discard %d, but only %d content. Clamping.", samples_to_discard, state->input_buffer_content);
-                samples_to_discard = state->input_buffer_content;
+                samples_to_discard = state->input_buffer_content; 
             }
             state->input_buffer_read_pos = (state->input_buffer_read_pos + samples_to_discard) % state->input_buffer_capacity;
             state->input_buffer_content -= samples_to_discard;
             state->input_ring_buffer_stream_start_offset += samples_to_discard;
-            app_log("DEBUG", "WSOLA_DISCARD_DONE: iter=%d, discarded=%d, new_ring_start_abs=%lld, new_read_pos=%d, new_content=%d",
-                    loop_iterations, samples_to_discard, state->input_ring_buffer_stream_start_offset, state->input_buffer_read_pos, state->input_buffer_content);
+            app_log("DEBUG", "WSOLA_DISCARD_DONE: iter=%d, discarded=%d, new_ring_start_abs=%lld, new_read_pos=%d, new_content=%d", 
+               loop_iterations, samples_to_discard, state->input_ring_buffer_stream_start_offset, state->input_buffer_read_pos, state->input_buffer_content);
         }
         else if (samples_to_discard < 0)
         {
-            app_log("DEBUG", "WSOLA_DISCARD_SKIP: iter=%d, samples_to_discard_calc was %d (negative).", loop_iterations, samples_to_discard);
+             app_log("DEBUG", "WSOLA_DISCARD_SKIP: iter=%d, samples_to_discard_calc was %d (negative).", loop_iterations, samples_to_discard);
         }
     } // End of while loop
 
-    app_log("DEBUG", "WSOLA_PROCESS_EXIT: loop_iters=%d, output_written=%d, input_content_end=%d, next_ideal_start=%lld",
-            loop_iterations, output_samples_written, state->input_buffer_content, state->next_ideal_input_frame_start_sample_offset);
+    app_log("DEBUG", "WSOLA_PROCESS_EXIT: loop_iters=%d, output_written=%d, input_content_end=%d, next_ideal_start=%lld", 
+       loop_iterations, output_samples_written, state->input_buffer_content, state->next_ideal_input_frame_start_sample_offset);
 
-    // --- Conservative Ring Buffer Management ---
+    // --- Conservative Ring Buffer Management --- 
     // Only discard data we're absolutely sure we won't need anymore
     // Aggressive discarding can cause buffer underruns and audio artifacts
     if (state->input_buffer_content > 0)
@@ -2451,12 +2427,12 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         // This prevents accidental discarding of data we might need
         // Especially important when changing speeds rapidly
         // const int SAFETY_MARGIN = MAX(state->overlap_samples, state->search_window_samples); // SAFETY_MARGIN not used in the revised logic below
-
-        // Most conservative approach:
+        
+        // Most conservative approach: 
         // 1. Keep data needed for next search window
         // The earliest sample needed is state->next_ideal_input_frame_start_sample_offset - state->search_window_samples.
         long long min_retainable_abs_offset = state->next_ideal_input_frame_start_sample_offset - state->search_window_samples;
-
+                                            
         // Never discard data before stream position 0
         if (min_retainable_abs_offset < 0)
             min_retainable_abs_offset = 0;
