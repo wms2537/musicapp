@@ -1522,6 +1522,46 @@ int main(int argc, char *argv[])
             app_log("INFO", "End of music file (partial buffer read). This was the last chunk.");
             break;
         }
+
+        // --- Diagnostic Log for OLA boundary ---
+        static long frameNo = 0; // Needs to be static to persist across calls if wsola_process is called multiple times per "frame" from main loop
+                                 // Or, if wsola_process itself loops internally for multiple output hops, this is fine.
+                                 // Given the wsola_process structure, it processes as many hops as possible per call.
+        if (frameNo < 100) {   // Increased log lines slightly for more data
+            if (N_o > 0) { // Ensure N_o is positive to avoid array out of bounds
+                short old0 = state->output_overlap_add_buffer[0];
+                short new0 = state->current_synthesis_segment[0];
+                // The sum here is before clipping in the OLA loop.
+                // For more accurate comparison to what's output,
+                // we should consider the sum as it was calculated in the loop.
+                // However, for an off-by-one, old0 vs new0 is the key.
+                long sum0_raw = (long)old0 + (long)new0; // Use long to avoid overflow before observing
+                app_log("OLA_DBG","Frame %ld: old[0]=%d, new_head[0]=%d, raw_sum[0]=%ld. Output sample for this pos was: %d",
+                        frameNo,
+                        old0,
+                        new0,
+                        sum0_raw,
+                        output_buffer[output_samples_written - N_o] // First sample of the OLA block just written
+                       );
+
+                if (N_o > 1) { // Log one more sample if possible for context
+                     short old1 = state->output_overlap_add_buffer[1];
+                     short new1 = state->current_synthesis_segment[1];
+                     long sum1_raw = (long)old1 + (long)new1;
+                     app_log("OLA_DBG","Frame %ld: old[1]=%d, new_head[1]=%d, raw_sum[1]=%ld. Output sample for this pos was: %d",
+                        frameNo,
+                        old1,
+                        new1,
+                        sum1_raw,
+                        output_buffer[output_samples_written - N_o + 1]
+                       );
+                }
+            } else {
+                app_log("OLA_DBG", "Frame %ld: N_o is 0, cannot log boundary samples.", frameNo);
+            }
+        }
+        frameNo++;
+        // --- End Diagnostic Log ---
     }
 
 playback_end:
