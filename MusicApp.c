@@ -1159,6 +1159,7 @@ static long long find_best_match_segment(
     }
     
     // app_log("DEBUG", "find_best_match: Best offset = %d, Max Corr = %.4f", *best_segment_start_offset_from_ideal_center_ptr, max_correlation);
+    app_log("DEBUG", "find_best_match: Best offset = %d, Max Corr = %lld", *best_segment_start_offset_from_ideal_center_ptr, max_correlation);
     return max_correlation;
 }
 
@@ -1367,9 +1368,15 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
                                                 &best_offset_from_ideal_center);
 
         // Check if find_best_match_segment indicated an error or no valid segment found
-        if (correlation == -LLONG_MAX) { 
+        if (correlation == -LLONG_MAX) {
             app_log("WARNING", "WSOLA: find_best_match_segment returned error/no match. Using zero offset. Correlation: %lld", correlation);
             best_offset_from_ideal_center = 0; // Ensure fallback to zero offset
+        } else if (correlation == 0 && state->total_output_samples_generated < (unsigned long long)N) {
+            // If correlation is zero AND we are in the very initial frames (output overlap buffer was likely silent),
+            // it's better to stick to the ideal segment (offset 0) rather than an arbitrary edge of the search window.
+            app_log("DEBUG", "WSOLA: Correlation is 0 during initial frames (total_out_gen: %llu < N: %d). Forcing offset to 0 from %d.",
+                    state->total_output_samples_generated, N, best_offset_from_ideal_center);
+            best_offset_from_ideal_center = 0;
         }
 
         // Actual start of the N-sample synthesis segment in the ring buffer
@@ -1546,6 +1553,9 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
     }
     // --- End Unconditional Discard Logic ---
 
-    state->total_output_samples_generated += output_samples_written;
+    // state->total_output_samples_generated += output_samples_written; // Moved this update to after the loop
+    state->total_output_samples_generated += output_samples_written; // Ensure this is updated correctly
+    // state->total_input_samples_processed = state->next_ideal_input_frame_start_sample_offset; // This is an approximation
+
     return output_samples_written;
 }
