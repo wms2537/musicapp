@@ -89,7 +89,7 @@ WSOLA_State *wsola_state = NULL;
 // --- WSOLA Function Prototypes ---
 static void generate_hanning_window(float *float_window, int length);
 static void convert_float_window_to_q15(const float* float_window, short* q15_window, int length);
-static long long calculate_cross_correlation_numerator(const short *segment1, const short *segment2, int length);
+static float calculate_normalized_cross_correlation(const short *segment1, const short *segment2, int length);
 static bool get_segment_from_ring_buffer(const WSOLA_State *state, int start_index_in_ring, int length, short *output_segment);
 static long long find_best_match_segment(
     const WSOLA_State *state, 
@@ -621,9 +621,25 @@ int main(int argc, char *argv[]) {
     
     snd_pcm_hw_params_get_period_size(hw_params, &local_period_size_frames, 0);
     snd_pcm_hw_params_get_buffer_size(hw_params, &frames);
-    printf("ALSA Actual period size: %lu frames, ALSA Actual buffer size: %lu frames\n", local_period_size_frames, frames);
+    // printf("ALSA Actual period size: %lu frames, ALSA Actual buffer size: %lu frames\n", local_period_size_frames, frames);
 
     debug_msg(snd_pcm_hw_params(pcm_handle, hw_params), "加载硬件配置参数到驱动");
+
+    // --- Query actual ALSA parameters after setting ---
+    snd_pcm_format_t actual_format;
+    unsigned int actual_rate_check;
+    unsigned int actual_channels_check;
+    snd_pcm_hw_params_get_format(hw_params, &actual_format);
+    snd_pcm_hw_params_get_rate(hw_params, &actual_rate_check, 0);
+    snd_pcm_hw_params_get_channels(hw_params, &actual_channels_check);
+    printf("ALSA Configured - Format: %s (%d), Rate: %u Hz, Channels: %u\n", 
+           snd_pcm_format_name(actual_format), actual_format, actual_rate_check, actual_channels_check);
+    if (actual_format == SND_PCM_FORMAT_UNKNOWN) {
+        app_log("CRITICAL_ERROR", "ALSA configured to UNKNOWN format despite attempts to set it. pcm_format was: %s (%d)", snd_pcm_format_name(pcm_format), pcm_format);
+        // Potentially exit or handle error more gracefully
+    }
+    // --- End Query actual ALSA parameters ---
+
     snd_pcm_hw_params_free(hw_params);
 
     if (!init_mixer()) {
@@ -1038,38 +1054,37 @@ static void convert_float_window_to_q15(const float* float_window, short* q15_wi
 
 // Helper function to calculate normalized cross-correlation between two segments.
 // Segments are arrays of 16-bit signed PCM samples.
-static long long calculate_cross_correlation_numerator(const short *segment1, const short *segment2, int length) {
+static float calculate_normalized_cross_correlation(const short *segment1, const short *segment2, int length) {
     if (segment1 == NULL || segment2 == NULL || length <= 0) {
         app_log("ERROR", "NCC: Invalid arguments (NULL segments or zero/negative length: %d)", length);
-        return 0; // Or handle error appropriately, returning 0 for correlation might be problematic
+        return 0.0f; 
     }
 
-    // Use long long for sums to prevent overflow, as product of two shorts can exceed int range,
-    // and sum of many such products can exceed long range if length is large.
     long long sum_s1s2 = 0;
-    // No longer calculating sum_s1_sq and sum_s2_sq for the simplified version
-    // double sum_s1_sq = 0.0;
-    // double sum_s2_sq = 0.0;
+    long long sum_s1_sq = 0;
+    long long sum_s2_sq = 0;
 
     for (int i = 0; i < length; ++i) {
         short s1 = segment1[i];
         short s2 = segment2[i];
         sum_s1s2 += (long long)s1 * s2;
-        // sum_s1_sq += (double)s1 * s1;
-        // sum_s2_sq += (double)s2 * s2;
+        sum_s1_sq += (long long)s1 * s1;
+        sum_s2_sq += (long long)s2 * s2;
     }
 
-    // Denominator calculation for normalization (removed for simplicity)
-    // double denominator = sqrt(sum_s1_sq * sum_s2_sq);
-    // if (denominator == 0) {
-    //     // This can happen if one or both segments are all zeros.
-    //     // app_log("DEBUG", "NCC: Denominator is zero. s1_sq=%.2f, s2_sq=%.2f", sum_s1_sq, sum_s2_sq);
-    //     return 0.0; // Or handle as perfectly uncorrelated or perfectly correlated if both zero.
-    //                 // Returning 0.0 implies no correlation.
-    // }
-    // return (float)(sum_s1s2 / denominator);
+    if (sum_s1_sq == 0 || sum_s2_sq == 0) {
+        // If either segment has zero energy, correlation is typically 0, unless both are zero energy then it can be 1.
+        // For practical purposes in audio, if one is silence, consider correlation 0.
+        // app_log("DEBUG", "NCC: Zero energy in one or both segments. s1_sq=%lld, s2_sq=%lld", sum_s1_sq, sum_s2_sq);
+        return 0.0f;
+    }
 
-    return sum_s1s2; // Return the numerator of the cross-correlation
+    double denominator = sqrt((double)sum_s1_sq) * sqrt((double)sum_s2_sq);
+    if (denominator == 0) { // Should be caught by sum_s1_sq/sum_s2_sq check, but for safety.
+        return 0.0f;
+    }
+    
+    return (float)((double)sum_s1s2 / denominator);
 }
 
 // Helper function to safely get a segment of 'length' samples starting from
@@ -1080,13 +1095,8 @@ static bool get_segment_from_ring_buffer(const WSOLA_State *state, int start_ind
         // app_log("ERROR", "get_segment: Invalid arguments (state=%p, ring=%p, out=%p, len=%d)", state, state ? state->input_buffer_ring : NULL, output_segment, length);
         return false;
     }
-    // Check if the entire segment is actually available *contiguously* from the perspective of content,
-    // not just if `length` is less than `input_buffer_content`. This check is subtle because the ring buffer wraps.
-    // The main protection is that find_best_match_segment and wsola_process should only ask for segments
-    // they believe are available based on `input_buffer_content` and `input_ring_buffer_stream_start_offset`.
-    // The original simple check `length > state->input_buffer_content` is a good first pass.
     if (length > state->input_buffer_content) {
-        app_log("DEBUG", "get_segment: not enough content (%d) in ring buffer for requested length %d. Start_idx_ring=%d", state->input_buffer_content, length, start_index_in_ring);
+        DBG("get_segment: not enough content (%d) in ring buffer for requested length %d. Start_idx_ring=%d", state->input_buffer_content, length, start_index_in_ring);
         return false;
     }
 
@@ -1103,12 +1113,12 @@ static long long find_best_match_segment(
     const WSOLA_State *state,
     const short *target_segment_for_comparison, // This is typically state->output_overlap_add_buffer
     int ideal_search_center_ring_idx,           // Ideal start of search in input_buffer_ring
-    int *best_segment_start_offset_from_ideal_center_ptr) 
+    int *best_segment_start_offset_from_ideal_center_ptr)
 {
     if (!state || !target_segment_for_comparison || !best_segment_start_offset_from_ideal_center_ptr) {
         app_log("ERROR", "find_best_match: NULL pointer argument.");
         if (best_segment_start_offset_from_ideal_center_ptr) *best_segment_start_offset_from_ideal_center_ptr = 0;
-        return -1e18; // Indicate error or no match found, return a very small number for long long
+        return -LLONG_MAX; // Indicate error or no match found
     }
 
     int N_o = state->overlap_samples;
@@ -1133,7 +1143,8 @@ static long long find_best_match_segment(
     if (S_w <= 0) { // No search window, or invalid search window
         // No search window, just check the ideal_search_center_ring_idx
         if (get_segment_from_ring_buffer(state, ideal_search_center_ring_idx, N_o, candidate_segment)) {
-            max_correlation = calculate_cross_correlation_numerator(target_segment_for_comparison, candidate_segment, N_o);
+            float ncc_float = calculate_normalized_cross_correlation(target_segment_for_comparison, candidate_segment, N_o);
+            max_correlation = (long long)(ncc_float * 1000000.0f); // Scale float NCC to long long
             *best_segment_start_offset_from_ideal_center_ptr = 0; // Offset is 0 by definition
             match_found = true;
         } else {
@@ -1153,7 +1164,8 @@ static long long find_best_match_segment(
                 continue; // Skip this candidate
             }
 
-            long long current_correlation = calculate_cross_correlation_numerator(target_segment_for_comparison, candidate_segment, N_o);
+            float current_ncc_float = calculate_normalized_cross_correlation(target_segment_for_comparison, candidate_segment, N_o);
+            long long current_correlation = (long long)(current_ncc_float * 1000000.0f); // Scale float NCC to long long
 
             if (current_correlation > max_correlation) {
                 max_correlation = current_correlation;
@@ -1174,7 +1186,9 @@ static long long find_best_match_segment(
     }
     
     // app_log("DEBUG", "find_best_match: Best offset = %d, Max Corr = %.4f", *best_segment_start_offset_from_ideal_center_ptr, max_correlation);
-    app_log("DEBUG", "find_best_match: Best offset = %d, Max Corr = %lld", *best_segment_start_offset_from_ideal_center_ptr, max_correlation);
+    // Corrected log format for long long max_correlation, and display the original float NCC value for clarity
+    DBG("find_best_match: Best offset = %d, Max Corr (scaled) = %lld, NCC_float = %.4f", 
+            *best_segment_start_offset_from_ideal_center_ptr, max_correlation, (float)max_correlation / 1000000.0f);
     return max_correlation;
 }
 
@@ -1354,7 +1368,7 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
     int H_s_eff = (int)round((double)H_a / state->current_speed_factor);
     if (H_s_eff <= 0) H_s_eff = 1; // Ensure progress even at very high speed factors
 
-    app_log("DEBUG", "WSOLA_PROCESS_ENTRY: num_input=%d, max_output=%d, current_speed=%.2f, H_s_eff=%d, input_content_start=%d", 
+    DBG("WSOLA_PROCESS_ENTRY: num_input=%d, max_output=%d, current_speed=%.2f, H_s_eff=%d, input_content_start=%d", 
            num_input_samples, max_output_samples, state->current_speed_factor, H_s_eff, state->input_buffer_content);
 
     int loop_iterations = 0;
