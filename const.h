@@ -64,7 +64,6 @@ bool debug_msg(int result, const char *str);
 void open_music_file(const char *path_name);
 
 #define SND_PCM_FORMAT_S24_3BE 2432 // Example, replace with actual value if different
-#endif
 
 // --- ALSA PCM Globals (Moved from MusicApp.c for clarity if they are constants or types) ---
 // These were previously global in MusicApp.c. If they are truly constant or setup parameters,
@@ -128,4 +127,59 @@ const FIRFilter FIR_TREBLE_BOOST = {
     {0.5, -0.5, 0.0, 0.0, 0.0},  // Simple first-order difference (scaled) - crude high-pass.
     2
 };
+
+// --- WSOLA (Waveform Similarity Overlap-Add) for Pitch-Preserving Speed Control ---
+#define MAX_ANALYSIS_FRAME_MS 40 // Maximum analysis frame duration in milliseconds
+#define DEFAULT_ANALYSIS_FRAME_MS 30
+#define DEFAULT_OVERLAP_PERCENTAGE 0.50 // 50% overlap
+#define DEFAULT_SEARCH_WINDOW_MS 10   // +/- 10ms search window
+
+// Maximum possible samples in a frame, e.g., for 48000 Hz and 40ms: 48000 * 40 / 1000 = 1920
+// Let's set a higher bound to be safe, can be refined.
+#define MAX_WSOLA_FRAME_SAMPLES 4096 // Max samples for analysis_frame or overlap_samples
+
+typedef struct {
+    // Configuration (set once at init or when speed/format changes)
+    int sample_rate;
+    int num_channels; // Start with mono (1), extend to stereo later
+    double current_speed_factor;
+
+    // Derived parameters based on configuration
+    int analysis_frame_samples; // N: Number of samples in one analysis frame
+    int overlap_samples;        // N_o: Number of samples in the overlap region
+    int synthesis_hop_samples;  // H_s = (N - N_o) / speed_factor : Number of output samples generated per frame
+    int analysis_hop_samples;   // H_a = N - N_o : Number of input samples nominally consumed per frame (at 1x speed)
+    int search_window_samples;  // S_w: Number of samples in one side of the search window (+/- S_w)
+
+    // Buffers & State
+    short* analysis_window_function; // Precomputed Hanning window of size analysis_frame_samples
+                                     // Dynamically allocated based on analysis_frame_samples
+    
+    // Ring buffer to store input samples for analysis and look-back search
+    short* input_buffer_ring;    
+    int input_buffer_capacity;   // Total capacity of the ring buffer
+    int input_buffer_write_pos;  // Current write position in the ring buffer
+    int input_buffer_read_pos;   // Position from where next analysis frame can start
+    int input_buffer_content;    // Number of valid samples currently in the ring buffer
+
+    // Buffer to hold the previously synthesized (output) segment's tail for OLA with the next segment
+    short* output_overlap_add_buffer; 
+    // int output_overlap_add_size; // This should always be equal to 'overlap_samples'
+
+    long long total_input_samples_processed;
+    long long total_output_samples_generated;
+
+    // Internal buffer to hold the current segment selected for synthesis
+    // This helps avoid reading directly from input_buffer_ring if it wraps around mid-segment.
+    short* current_synthesis_segment; // Size: analysis_frame_samples
+
+} WSOLA_State;
+
+// Function pointer type for similarity measure, if we want to make it pluggable
+// typedef float (*similarity_measure_func)(short* frame1, short* frame2, int length);
+
+// Placeholder for SND_PCM_FORMAT_S24_LE if not defined
+#ifndef SND_PCM_FORMAT_S24_LE
+#define SND_PCM_FORMAT_S24_LE 3 // Common ALSA value, verify if used
+#endif
 

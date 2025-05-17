@@ -46,8 +46,100 @@ alwaysApply: false
 - Add a global variable for current speed multiplier (0.5, 1.0, 1.5, 2.0).
 - Add key bindings to cycle through speeds.
 - Implement changes to ALSA parameters or data processing pipeline. This might involve recalculating buffer sizes or sample rates dynamically.
-- *Done*
+- *Done - Initial simple version (changes pitch)*
   - Summary: Implemented playback speed control for factors 0.5x, 1.0x, 1.5x, and 2.0x using '[' and ']' keys. The core logic involves software resampling (sample duplication/dropping) of the audio data from the input buffer (`buff`) into a temporary dynamically allocated buffer (`buffer_for_alsa`) before sending it to `snd_pcm_writei`. The amount of data read from the file per iteration remains the same, but the data written to ALSA is adjusted to achieve the desired speed. Error handling for memory allocation of the temporary buffer is included, with a fallback to normal speed for the current chunk if allocation fails. Logging calls were updated to use `app_log`.
+
+**Enhancement: Pitch-Preserving Playback Speed Control (e.g., using WSOLA)**
+- **Status**: In Progress
+- **Details**: Replace the current simple resampling with an algorithm that preserves pitch while changing speed. WSOLA (Waveform Similarity-based Overlap-Add) or a similar time-domain technique will be targeted.
+
+  1.  **Algorithm Research & Design Finalization**:
+      *   Thoroughly review WSOLA principles and its variants.
+      *   Define key parameters: analysis frame size (e.g., 20-40ms), synthesis frame size (derived from speed factor), overlap length, and search window for similarity.
+            *   Initial parameters:
+                *   `ANALYSIS_FRAME_SIZE_MS` (e.g., 30ms)
+                *   `OVERLAP_PERCENTAGE` (e.g., 50%-75%)
+                *   `SEARCH_WINDOW_MS` (e.g., +/- 10ms relative to ideal next segment)
+                *   Derived sample counts will depend on `sample_rate`.
+      *   Consider requirements for different audio sample formats (e.g., S16_LE).
+      *   Status: Partially Done
+      *   Summary: Initial WSOLA parameters identified. Key elements include analysis frame size, overlap percentage, and search window size. These will determine buffer requirements and processing steps. The algorithm will operate on S16_LE samples.
+
+  2.  **Implement Core WSOLA Components**:
+      *   **Windowing Function**: Implement a suitable window (e.g., Hanning window). `W(n) = 0.5 * (1 - cos(2 * PI * n / (M-1)))` where M is window length.
+          *   Status: Done
+          *   Summary: Implemented `generate_hanning_window` (float) and `convert_float_window_to_q15` (short) helpers in `MusicApp.c`. The Q15 Hanning window is stored in `WSOLA_State` during `wsola_init`.
+      *   **Input Buffer Management**: Logic to feed audio frames into the WSOLA process.
+          *   Status: Pending (Part of `wsola_process`)
+          *   Summary:
+      *   **Similarity Detection**: Function to find the best matching segment in the input signal for overlap-add, typically using cross-correlation or a sum of squared differences within a defined search area.
+          *   Status: Pending (Helper for `wsola_process`, e.g., `find_best_match_segment` using `calculate_normalized_cross_correlation`)
+          *   Summary:
+      *   **Overlap-Add (OLA)**: Mechanism to combine (add) overlapping, windowed segments of audio to produce the output stream.
+          *   Status: Pending (Part of `wsola_process`)
+          *   Summary:
+      *   **Output Buffer Management**: Collect the time-scaled audio.
+          *   Status: Pending (Part of `wsola_process`)
+          *   Summary:
+
+  3.  **Data Structures for WSOLA State**:
+      *   Define and implement structures to hold the state required for the WSOLA algorithm between processing blocks (e.g., previous frame data, history for overlap).
+      *   Example: `typedef struct { short* previous_frame; int prev_frame_size; ... } WSOLA_State;`
+            *   Initial structure proposal:
+                ```c
+                // In const.h or MusicApp.c
+                // #define MAX_FRAME_SAMPLES 2048 // Example based on 48kHz, 40ms
+                typedef struct {
+                    int sample_rate;
+                    int num_channels; // Initially 1 for simplicity, then extend
+                    double current_speed_factor;
+
+                    int analysis_frame_samples; // N
+                    int overlap_samples;        // N_o
+                    int synthesis_hop_samples;  // H_s = N - N_o (output step at 1x)
+                    int analysis_hop_samples;   // H_a = N - N_o (input step at 1x)
+                    int search_window_samples;  // S_w
+
+                    short* analysis_window_function; // Precomputed Hanning/Hamming window
+                    
+                    // Ring buffer for input audio
+                    short* input_buffer_ring;
+                    int input_buffer_size;
+                    int input_buffer_write_pos;
+                    int input_buffer_read_pos;
+                    int input_buffer_content;
+
+                    // Buffer for storing the tail of the last synthesized frame for OLA
+                    short* output_overlap_add_buffer;
+                    int output_overlap_add_size; // Should be == overlap_samples
+
+                    long long total_input_samples_processed;
+                    long long total_output_samples_generated;
+                } WSOLA_State;
+                ```
+      *   Status: Done
+      *   Summary: Proposed a `WSOLA_State` structure to hold configuration (sample rate, speed factor), derived parameters (frame sizes, hop sizes), precomputed window, input ring buffer, and output overlap buffer. This structure will be central to the WSOLA implementation. Implemented `wsola_init` to allocate and initialize this state, and `wsola_destroy` to free it.
+
+  4.  **Integration into `MusicApp.c`**:
+      *   Develop a primary function, e.g., `int process_audio_wsola(WSOLA_State* state, const short* input_buffer, int num_input_samples, double speed_factor, short* output_buffer, int max_output_samples)`.
+      *   Modify the main audio processing loop in `MusicApp.c`. Instead of simple sample duplication/dropping, audio chunks will be fed into `process_audio_wsola`.
+      *   The output from WSOLA will then be sent to ALSA. This involves careful management of buffer sizes for both input to WSOLA and output to ALSA, as the number of output samples will vary based on the speed factor.
+      *   Handle S16_LE format specifically for now. The `buff` (unsigned char) will need to be interpreted as `short` for processing.
+      *   Status: Pending
+      *   Summary:
+
+  5.  **Testing and Quality Tuning**:
+      *   Test with various audio files (music, speech) and all speed factors (0.5x, 1.5x, 2.0x).
+      *   Tune WSOLA parameters (frame sizes, overlap, search window) to minimize artifacts (e.g., phasing, choppiness) and achieve the best possible audio quality.
+      *   Profile CPU usage to ensure real-time performance is feasible.
+      *   Status: Pending
+      *   Summary:
+
+  6.  **Update Documentation (README.md)**:
+      *   Reflect that playback speed control now preserves pitch.
+      *   Mention the algorithm used (e.g., WSOLA-based).
+      *   Status: Pending
+      *   Summary:
 
 ### 5. Logging Output
 - Review existing `printf` statements.

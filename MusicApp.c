@@ -81,6 +81,20 @@ const int NUM_EQ_PRESETS = sizeof(EQ_PRESETS) / sizeof(EQ_PRESETS[0]);
 int current_eq_idx = 0; // Default to Normal/Flat
 short fir_history[MAX_FIR_TAPS -1]; // Buffer to store previous samples for FIR calculation
 
+// --- WSOLA State Global ---
+WSOLA_State *wsola_state = NULL;
+
+// --- WSOLA Function Prototypes ---
+static void generate_hanning_window(short *window, int length);
+static float calculate_normalized_cross_correlation(const short *segment1, const short *segment2, int length);
+static int find_best_match_segment(const WSOLA_State *state, const short *target_segment, int *best_offset_ptr);
+
+bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_arg, double initial_speed_factor_arg, 
+                int analysis_frame_ms_arg, float overlap_percentage_arg, int search_window_ms_arg);
+int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_samples, 
+                  short *output_buffer, int max_output_samples);
+void wsola_destroy(WSOLA_State **state_ptr);
+
 void initialize_fir_history() {
     for (int i = 0; i < MAX_FIR_TAPS - 1; ++i) {
         fir_history[i] = 0;
@@ -887,4 +901,286 @@ playback_end:
         log_fp = NULL; // Good practice to NULL out closed file pointers
     }
     return 0;
+}
+
+// --- WSOLA Implementation ---
+
+// Generates a Hanning window of a given length.
+// Output `window` values are typically floats [0,1], here we might store Q15 shorts if direct scaling desired
+// For now, this function will be a placeholder as we need to decide on float vs fixed-point for window.
+// Let's assume it populates a float array first, then it's converted to short if needed.
+// For simplicity here, we'll compute float values and assume they'll be scaled appropriately when used.
+static void generate_hanning_window(float *float_window, int length) {
+    if (length <= 0) return;
+    for (int i = 0; i < length; i++) {
+        float_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (float)(length - 1)));
+    }
+}
+
+// Helper to convert float window to short Q15 window
+static void convert_float_window_to_q15(const float* float_window, short* q15_window, int length) {
+    for (int i = 0; i < length; i++) {
+        // Scale float window [0, 1] to Q15 range [-32768, 32767], typically [0, 32767] for window
+        q15_window[i] = (short)(float_window[i] * 32767.0f);
+    }
+}
+
+// Calculates a simplified cross-correlation normalized by signal energies.
+// Returns a value ideally between -1 and 1 (though precision with shorts might affect exact range).
+// Higher absolute value means more similarity (or inverse similarity).
+static float calculate_normalized_cross_correlation(const short *segment1, const short *segment2, int length) {
+    if (length <= 0 || !segment1 || !segment2) {
+        return 0.0f;
+    }
+
+    double sum_s1_s2 = 0.0;
+    double sum_s1_sq = 0.0;
+    double sum_s2_sq = 0.0;
+
+    for (int i = 0; i < length; i++) {
+        double s1_val = (double)segment1[i];
+        double s2_val = (double)segment2[i];
+
+        sum_s1_s2 += s1_val * s2_val;
+        sum_s1_sq += s1_val * s1_val;
+        sum_s2_sq += s2_val * s2_val;
+    }
+
+    if (sum_s1_sq == 0.0 || sum_s2_sq == 0.0) {
+        // If either segment is all zeros, correlation is undefined or zero.
+        // If they are both all zeros, they are perfectly correlated, but sqrt(0*0) is an issue.
+        // Let's return 1.0 if both are zero energy (identical silence), 0 otherwise.
+        return (sum_s1_sq == 0.0 && sum_s2_sq == 0.0) ? 1.0f : 0.0f;
+    }
+
+    double denominator = sqrt(sum_s1_sq * sum_s2_sq);
+    if (denominator == 0.0) { // Should be caught by above, but as a safeguard
+        return 0.0f;
+    }
+
+    return (float)(sum_s1_s2 / denominator);
+}
+
+// Helper function to extract a segment from the input ring buffer, handling wrap-around.
+// Copies `length` samples starting from `start_index` in `state->input_buffer_ring` into `output_segment`.
+// Assumes `output_segment` is pre-allocated with at least `length` capacity.
+// Returns false if requested segment is not fully available in the ring buffer.
+static bool get_segment_from_ring_buffer(const WSOLA_State *state, int start_index_in_ring, int length, short *output_segment) {
+    if (!state || !state->input_buffer_ring || !output_segment || length <= 0) return false;
+    if (length > state->input_buffer_content) { // Not enough data in the entire buffer
+        // app_log("DEBUG", "get_segment: not enough content (%d) for length %d", state->input_buffer_content, length);
+        return false;
+    }
+
+    for (int i = 0; i < length; i++) {
+        int current_ring_idx = (start_index_in_ring + i) % state->input_buffer_capacity;
+        output_segment[i] = state->input_buffer_ring[current_ring_idx];
+    }
+    return true;
+}
+
+// Finds the segment in the input ring buffer (within a search window) that best matches 
+// the provided target_segment (typically the tail of the last synthesized frame).
+// The search is centered around an ideal_start_offset_in_ring.
+// state: WSOLA state containing ring buffer, search_window_samples, overlap_samples.
+// target_segment_for_comparison: The segment to match against (e.g., state->output_overlap_add_buffer).
+// ideal_search_center_ring_idx: The index in the ring buffer that is the center of our search range.
+// best_segment_start_offset_from_ideal_center_ptr: Output, the offset from ideal_search_center_ring_idx of the best match found.
+//                                                    A value of 0 means the ideal center itself was best or part of best segment.
+// Returns: The highest correlation value found. If no valid segment found, returns a very low value (e.g. -2.0f).
+static float find_best_match_segment(
+    const WSOLA_State *state, 
+    const short *target_segment_for_comparison, // This is of length state->overlap_samples
+    int ideal_search_center_ring_idx,      // Center of the search in the input ring buffer
+    int *best_segment_start_offset_from_ideal_center_ptr // Output: offset of the best N-sample segment
+) {
+    if (!state || !target_segment_for_comparison || !best_segment_start_offset_from_ideal_center_ptr) {
+        return -2.0f; // Indicate error
+    }
+
+    int N_o = state->overlap_samples;
+    int S_w = state->search_window_samples;
+
+    if (N_o <= 0) return -2.0f; // Nothing to compare
+
+    *best_segment_start_offset_from_ideal_center_ptr = 0;
+    float max_correlation = -2.0f; // Initialize with a value lower than any possible correlation
+
+    short *candidate_segment = (short *)malloc(N_o * sizeof(short));
+    if (!candidate_segment) {
+        app_log("ERROR", "find_best_match: Failed to allocate temp candidate_segment buffer");
+        return -2.0f; 
+    }
+
+    if (S_w == 0) {
+        // No search window, just check the ideal_search_center_ring_idx
+        if (get_segment_from_ring_buffer(state, ideal_search_center_ring_idx, N_o, candidate_segment)) {
+            max_correlation = calculate_normalized_cross_correlation(target_segment_for_comparison, candidate_segment, N_o);
+            *best_segment_start_offset_from_ideal_center_ptr = 0; // Offset is 0 by definition
+        } else {
+            max_correlation = -2.0f; // Segment not available
+            *best_segment_start_offset_from_ideal_center_ptr = 0;
+        }
+    } else {
+        // The search range is [ideal_search_center_ring_idx - S_w, ideal_search_center_ring_idx + S_w]
+        for (int offset = -S_w; offset <= S_w; ++offset) {
+            int candidate_start_ring_idx = (ideal_search_center_ring_idx + offset + state->input_buffer_capacity) % state->input_buffer_capacity;
+
+            if (!get_segment_from_ring_buffer(state, candidate_start_ring_idx, N_o, candidate_segment)) {
+                continue; 
+            }
+
+            float current_correlation = calculate_normalized_cross_correlation(target_segment_for_comparison, candidate_segment, N_o);
+
+            if (current_correlation > max_correlation) {
+                max_correlation = current_correlation;
+                *best_segment_start_offset_from_ideal_center_ptr = offset;
+            }
+        }
+        // If no correlation was found (e.g. all segments were unavailable in a search window)
+        if (max_correlation == -2.0f) { 
+            // app_log("DEBUG", "find_best_match: No valid correlation found in search window. Defaulting to offset 0.");
+            *best_segment_start_offset_from_ideal_center_ptr = 0;
+            // Optionally, could try to get the segment at offset 0 if all others failed, but current loop structure implies it was tried if S_w > 0.
+            // If an error occurred or no segment was available, max_correlation remains -2.0f
+        }
+    }
+
+    free(candidate_segment);
+    return max_correlation;
+}
+
+bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_arg, double initial_speed_factor_arg,
+                int analysis_frame_ms_arg, float overlap_percentage_arg, int search_window_ms_arg) {
+    if (state_ptr == NULL) {
+        app_log("ERROR", "wsola_init: NULL state_ptr provided.");
+        return false;
+    }
+    if (*state_ptr != NULL) {
+        app_log("WARNING", "wsola_init: *state_ptr is not NULL. Potential memory leak. Destroying existing state first.");
+        wsola_destroy(state_ptr); // Attempt to clean up
+    }
+
+    WSOLA_State *s = (WSOLA_State *)malloc(sizeof(WSOLA_State));
+    if (!s) {
+        app_log("ERROR", "wsola_init: Failed to allocate memory for WSOLA_State.");
+        return false;
+    }
+    memset(s, 0, sizeof(WSOLA_State)); // Initialize all to zero/NULL
+
+    // Validate and store configuration
+    if (sample_rate_arg <= 0 || num_channels_arg <= 0 || initial_speed_factor_arg <= 0.0 ||
+        analysis_frame_ms_arg <= 0 || overlap_percentage_arg < 0.0f || overlap_percentage_arg >= 1.0f ||
+        search_window_ms_arg < 0) { // search_window_ms can be 0 for no search
+        app_log("ERROR", "wsola_init: Invalid parameters (sample_rate=%d, channels=%d, speed=%.2f, frame_ms=%d, overlap=%.2f, search_ms=%d).",
+                sample_rate_arg, num_channels_arg, initial_speed_factor_arg, analysis_frame_ms_arg, overlap_percentage_arg, search_window_ms_arg);
+        free(s);
+        return false;
+    }
+    
+    // For now, WSOLA implementation will be mono. Stereo needs interleaved processing or dual states.
+    if (num_channels_arg != 1) {
+        app_log("ERROR", "wsola_init: Currently only supports mono (1 channel), received %d channels.", num_channels_arg);
+        free(s);
+        return false;
+    }
+
+    s->sample_rate = sample_rate_arg;
+    s->num_channels = num_channels_arg; // Will be 1 for now
+    s->current_speed_factor = initial_speed_factor_arg;
+
+    // Calculate derived parameters (integer samples)
+    s->analysis_frame_samples = (s->sample_rate * analysis_frame_ms_arg) / 1000;
+    s->overlap_samples = (int)(s->analysis_frame_samples * overlap_percentage_arg);
+    s->analysis_hop_samples = s->analysis_frame_samples - s->overlap_samples; // Nominal input hop at 1x speed
+    // Synthesis hop depends on speed factor, calculated during processing, but nominal is same as analysis_hop
+    s->synthesis_hop_samples = s->analysis_hop_samples; // This is the target output advancement for each frame at 1x speed
+                                                       // Effective output hop = analysis_hop_samples / speed_factor
+
+    s->search_window_samples = (s->sample_rate * search_window_ms_arg) / 1000;
+
+    if (s->analysis_frame_samples <= 0 || s->overlap_samples < 0 || s->analysis_hop_samples <= 0) {
+         app_log("ERROR", "wsola_init: Invalid derived frame/hop sizes (N=%d, No=%d, Ha=%d). Check frame_ms and overlap percentage.",
+                s->analysis_frame_samples, s->overlap_samples, s->analysis_hop_samples);
+        free(s);
+        return false;
+    }
+    if (s->overlap_samples >= s->analysis_frame_samples) {
+        app_log("ERROR", "wsola_init: Overlap samples (%d) must be less than analysis frame samples (%d).", s->overlap_samples, s->analysis_frame_samples);
+        free(s);
+        return false;
+    }
+
+
+    // Allocate memory for buffers
+    s->analysis_window_function = (short *)malloc(s->analysis_frame_samples * sizeof(short));
+    if (!s->analysis_window_function) {
+        app_log("ERROR", "wsola_init: Failed to allocate memory for analysis_window_function.");
+        wsola_destroy(&s); return false;
+    }
+    // Generate Hanning window (float first, then convert to Q15 short)
+    float *temp_float_window = (float *)malloc(s->analysis_frame_samples * sizeof(float));
+    if (!temp_float_window) {
+        app_log("ERROR", "wsola_init: Failed to allocate memory for temp_float_window.");
+        wsola_destroy(&s); return false;
+    }
+    generate_hanning_window(temp_float_window, s->analysis_frame_samples);
+    convert_float_window_to_q15(temp_float_window, s->analysis_window_function, s->analysis_frame_samples);
+    free(temp_float_window);
+
+
+    // Input ring buffer: needs to hold enough for current frame, look-behind for OLA, and look-ahead for search
+    // Minimum capacity: overlap_samples (for previous output tail) + analysis_frame_samples (current natural choice) + search_window_samples (for search).
+    // A more generous size: 2*N + 2*S_w (N=analysis_frame_samples, S_w=search_window_samples) to simplify wrapping logic.
+    // Let's use: N (current frame) + N_o (previous output overlap) + 2*S_w (search range) + some safety margin / input chunk size.
+    // For simplicity, let's make it at least 2 * analysis_frame_samples + 2 * search_window_samples
+    s->input_buffer_capacity = s->analysis_frame_samples + (2 * s->search_window_samples) + s->analysis_frame_samples; // A bit more than N + 2*S_w
+    if (s->input_buffer_capacity < MAX_WSOLA_FRAME_SAMPLES * 2) { // Ensure some reasonable minimum
+        s->input_buffer_capacity = MAX_WSOLA_FRAME_SAMPLES * 2;
+    }
+
+
+    s->input_buffer_ring = (short *)malloc(s->input_buffer_capacity * sizeof(short));
+    if (!s->input_buffer_ring) {
+        app_log("ERROR", "wsola_init: Failed to allocate memory for input_buffer_ring.");
+        wsola_destroy(&s); return false;
+    }
+    s->input_buffer_write_pos = 0;
+    s->input_buffer_read_pos = 0;
+    s->input_buffer_content = 0;
+
+    s->output_overlap_add_buffer = (short *)malloc(s->overlap_samples * sizeof(short));
+    if (!s->output_overlap_add_buffer) {
+        app_log("ERROR", "wsola_init: Failed to allocate memory for output_overlap_add_buffer.");
+        wsola_destroy(&s); return false;
+    }
+    memset(s->output_overlap_add_buffer, 0, s->overlap_samples * sizeof(short)); // Initialize to silence
+
+    s->current_synthesis_segment = (short *)malloc(s->analysis_frame_samples * sizeof(short));
+    if (!s->current_synthesis_segment) {
+        app_log("ERROR", "wsola_init: Failed to allocate memory for current_synthesis_segment.");
+        wsola_destroy(&s); return false;
+    }
+    
+    s->total_input_samples_processed = 0;
+    s->total_output_samples_generated = 0;
+
+    *state_ptr = s;
+    app_log("INFO", "wsola_init: WSOLA state initialized successfully. N=%d, No=%d, Ha=%d, Sw=%d, InputRingCap=%d",
+            s->analysis_frame_samples, s->overlap_samples, s->analysis_hop_samples, s->search_window_samples, s->input_buffer_capacity);
+    return true;
+}
+
+void wsola_destroy(WSOLA_State **state_ptr) {
+    if (state_ptr && *state_ptr) {
+        WSOLA_State *s = *state_ptr;
+        free(s->analysis_window_function);
+        free(s->input_buffer_ring);
+        free(s->output_overlap_add_buffer);
+        free(s->current_synthesis_segment);
+        // Add any other allocated resources here
+        free(s);
+        *state_ptr = NULL;
+        app_log("INFO", "wsola_destroy: WSOLA state destroyed.");
+    }
 }
