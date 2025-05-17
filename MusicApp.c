@@ -1361,14 +1361,15 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
             % state->input_buffer_capacity;
 
         int best_offset_from_ideal_center = 0;
-        float correlation = find_best_match_segment(state, 
+        long long correlation = find_best_match_segment(state, 
                                                 state->output_overlap_add_buffer, 
                                                 ideal_search_center_ring_idx, 
                                                 &best_offset_from_ideal_center);
 
-        if (correlation < -1.5f) { // find_best_match_segment returns -2.0f on error/no segment
-            app_log("WARNING", "WSOLA: find_best_match_segment failed or found no good correlation (%.2f). Using zero offset.", correlation);
-            best_offset_from_ideal_center = 0; // Fallback to no offset
+        // Check if find_best_match_segment indicated an error or no valid segment found
+        if (correlation == -LLONG_MAX) { 
+            app_log("WARNING", "WSOLA: find_best_match_segment returned error/no match. Using zero offset. Correlation: %lld", correlation);
+            best_offset_from_ideal_center = 0; // Ensure fallback to zero offset
         }
 
         // Actual start of the N-sample synthesis segment in the ring buffer
@@ -1387,8 +1388,13 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
 
         // Apply Hanning window (Q15)
         for (int i = 0; i < N; ++i) {
-            long long val = (long long)state->current_synthesis_segment[i] * state->analysis_window_function[i];
-            state->current_synthesis_segment[i] = (short)(val >> 15); // Q15 scaling
+            long long val_ll = (long long)state->current_synthesis_segment[i] * state->analysis_window_function[i];
+            // state->current_synthesis_segment[i] = (short)(val_ll >> 15); // Q15 scaling - original
+            // More robust scaling using floating point division to avoid potential issues with right-shift of negative numbers or precision:
+            double scaled_val_double = (double)val_ll / 32767.0; // analysis_window_function is scaled by 32767
+            if (scaled_val_double > 32767.0) scaled_val_double = 32767.0;
+            if (scaled_val_double < -32768.0) scaled_val_double = -32768.0;
+            state->current_synthesis_segment[i] = (short)round(scaled_val_double);
         }
 
         int samples_to_write_this_frame = H_s_eff;

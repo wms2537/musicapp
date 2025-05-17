@@ -151,7 +151,13 @@ alwaysApply: false
           *Done*
           *Summary: Reduced `DEFAULT_OVERLAP_PERCENTAGE` from 0.50 to 0.25 in `const.h`. Previous adjustments to analysis frame size (20ms) and search window (6ms) did not resolve choppiness. This change significantly reduces the length of each cross-correlation, further decreasing CPU load, but may impact audio quality by reducing OLA smoothing. User reported less choppiness but distorted audio.*
           *Done*
-          *Summary: Increased `DEFAULT_OVERLAP_PERCENTAGE` from 0.25 to 0.35 in `const.h`. The previous value of 0.25 reduced choppiness but caused audio distortion. This change is an attempt to improve audio quality by increasing smoothing, while hoping the CPU load remains manageable.*
+          *Summary: Increased `DEFAULT_OVERLAP_PERCENTAGE` from 0.25 to 0.35 in `const.h`. The previous value of 0.25 reduced choppiness but caused audio distortion. This change is an attempt to improve audio quality by increasing smoothing, while hoping the CPU load remains manageable. User reported continued heavy distortion, suggesting a core implementation issue.*
+          *Done*
+          *Summary: Modified the resampling logic within `wsola_process` in `MusicApp.c`. Changed the resampling of the non-overlapping part of the synthesis segment from nearest-neighbor to linear interpolation. This is to address the reported heavy audio distortion, which is a common artifact of nearest-neighbor resampling in WSOLA, especially with significant time-stretching/compression. User reported no improvement in distortion.*
+          *Done*
+          *Summary: Corrected a critical logic error in `wsola_process` in `MusicApp.c`. The return value from `find_best_match_segment` (a `long long`) was being incorrectly compared to a float value (`-1.5f`). This was changed to correctly compare against `-LLONG_MAX` (the error/no-match indicator from `find_best_match_segment`) and the local `correlation` variable type was changed from `float` to `long long`. This error likely caused WSOLA to consistently use a zero offset for segment selection, leading to severe audio quality issues. User reported no improvement in distortion.*
+          *Done*
+          *Summary: Changed the Q15 scaling method after Hanning window application in `wsola_process` (MusicApp.c). Instead of `val >> 15`, it now uses `round((double)val_ll / 32767.0)` with clamping. This is to ensure more robust scaling and rule out potential subtle fixed-point arithmetic issues as a source of the persistent distortion.*
 
   6.  **Update Documentation (README.md)**:
       *   Reflect that playback speed control now preserves pitch.
