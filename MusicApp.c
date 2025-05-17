@@ -1823,41 +1823,28 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
 
     int output_samples_written = 0;
     int N = state->analysis_frame_samples;
-    int N_o = state->overlap_samples;
-    int H_a = state->analysis_hop_samples; // Nominal analysis hop = N - N_o (now N/2)
-    double speed = state->current_speed_factor;
-    int H_s_eff = (int)round((double)H_a / speed);
-    
-    // Clamp H_s_eff (User Step 3)
-    int min_synthesis_hop = state->analysis_frame_samples / 4;
-    if (min_synthesis_hop < 1) min_synthesis_hop = 1; // Ensure at least 1
-    int max_synthesis_hop = (state->analysis_frame_samples * 3) / 4;
-    if (max_synthesis_hop < min_synthesis_hop) max_synthesis_hop = min_synthesis_hop; // Ensure max >= min
+    int N_o = state->overlap_samples; // This is N/2
+    int H_a = state->analysis_hop_samples; // This is N/2, the analysis hop for 50% OLA
 
-    if (H_s_eff < min_synthesis_hop) {
-        H_s_eff = min_synthesis_hop;
-        DBG("WSOLA_PROCESS: Clamped H_s_eff to min_synthesis_hop (%d) for speed %.2fx", min_synthesis_hop, speed);
-    }
-    if (H_s_eff > max_synthesis_hop) {
-        H_s_eff = max_synthesis_hop;
-        DBG("WSOLA_PROCESS: Clamped H_s_eff to max_synthesis_hop (%d) for speed %.2fx", max_synthesis_hop, speed);
-    }
-    state->synthesis_hop_samples = H_s_eff; // Update state after clamping
-
-    DBG("WSOLA_PROCESS_ENTRY: N=%d, N_o=%d(N/2), H_a=%d(N/2), H_s_eff_clamped=%d (range %d-%d), speed=%.2f", 
-           N, N_o, H_a, H_s_eff, min_synthesis_hop, max_synthesis_hop, speed);
+    DBG("WSOLA_PROCESS_ENTRY: N=%d, N_o=%d(N/2), H_a=%d(N/2), speed=%.2f", 
+           N, N_o, H_a, state->current_speed_factor);
 
     int loop_iterations = 0;
-    // Guard the main output loop: ensure space in output_buffer AND input for the next frame.
-    long long latest_required_stream_offset_for_loop_check; // Declare outside for visibility in condition
-    long long latest_available_stream_offset_for_loop_check;  // Declare outside for visibility in condition
+    long long latest_required_stream_offset_for_loop_check;
+    long long latest_available_stream_offset_for_loop_check;
 
-    while (output_samples_written + H_s_eff <= max_output_samples) {
+    // Loop as long as we can produce N_o samples and have space in the output buffer.
+    while (output_samples_written + N_o <= max_output_samples) {
         loop_iterations++;
-        // app_log("DEBUG", "WSOLA_PROCESS_LOOP_ITER: iter=%d, out_written=%d, H_s_eff=%d", loop_iterations, output_samples_written, H_s_eff); 
 
-        // These are calculated inside the loop to reflect changes to state->next_ideal_input_frame_start_sample_offset
-        latest_required_stream_offset_for_loop_check = state->next_ideal_input_frame_start_sample_offset + N + state->search_window_samples;
+        latest_required_stream_offset_for_loop_check = state->next_ideal_input_frame_start_sample_offset + N; // Need a full N segment for analysis
+        // For search, it was + N + search_window_samples. For 50% OLA, the search is still important.
+        // The find_best_match_segment still needs a search window around the ideal point.
+        // The requirement is for an N-length segment starting at ideal_search_center_ring_idx + best_offset.
+        // Ideal search center is derived from next_ideal_input_frame_start_sample_offset.
+        // So, we need data up to: next_ideal_input_frame_start_sample_offset + search_window_samples + N (worst case offset)
+        latest_required_stream_offset_for_loop_check = state->next_ideal_input_frame_start_sample_offset + state->search_window_samples + N;
+
         latest_available_stream_offset_for_loop_check = state->input_ring_buffer_stream_start_offset + state->input_buffer_content;
 
         if (latest_available_stream_offset_for_loop_check < latest_required_stream_offset_for_loop_check) {
@@ -1902,79 +1889,50 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         }
 
         // Apply the Q15 Sine analysis window to the entire current_synthesis_segment (N samples).
-        for (int i = 0; i < N; ++i) { // N is state->analysis_frame_samples
+        for (int i = 0; i < N; ++i) { 
             long long val_ll = (long long)state->current_synthesis_segment[i] * state->analysis_window_function[i];
-            state->current_synthesis_segment[i] = (short)(val_ll >> 15); // Q15 scaling
+            state->current_synthesis_segment[i] = (short)(val_ll >> 15); 
         }
 
-        int samples_to_write_this_frame = H_s_eff;
+        // OLA produces N_o samples in this iteration.
+        // int samples_to_write_this_frame = H_s_eff; // REMOVED H_s_eff
         int samples_written_this_frame_ola = 0;
-        int samples_written_this_frame_new = 0;
+        // int samples_written_this_frame_new = 0; // REMOVED, no separate "new" part write
 
         // --- Overlap-Add with 50% Sine Window --- 
-        // The fade_in/fade_out arrays are no longer used.
-        // OLA is sum of previous frame's second half and current frame's first half.
+        for (int i = 0; i < N_o; ++i) { // N_o is N/2. This loop now produces N_o samples.
+            // Optional guard suggested by user: if (max_output_samples - output_samples_written < N_o) break;
+            // This is covered by the main while loop condition: output_samples_written + N_o <= max_output_samples
 
-        for (int i = 0; i < N_o; ++i) { // N_o is N/2
-            if (output_samples_written < max_output_samples && samples_written_this_frame_ola < samples_to_write_this_frame) {
-                long long sum = (long long)state->output_overlap_add_buffer[i] + state->current_synthesis_segment[i];
-                
-                // Clamp sum to 16-bit range
-                if (sum > 32767) sum = 32767;
-                else if (sum < -32768) sum = -32768;
-                
-                output_buffer[output_samples_written++] = (short)sum;
-                samples_written_this_frame_ola++;
-            } else {
-                break; // Output buffer full or enough samples for this part written
-            }
+            long long sum = (long long)state->output_overlap_add_buffer[i] + state->current_synthesis_segment[i];
+            
+            if (sum > 32767) sum = 32767;
+            else if (sum < -32768) sum = -32768;
+            
+            output_buffer[output_samples_written++] = (short)sum;
+            samples_written_this_frame_ola++; 
+            // No break needed here for samples_written_this_frame_ola < N_o, loop runs N_o times if output has space.
         }
 
-        // --- Write the "new" part (second half of current windowed segment) --- 
-        // This directly follows the OLA part, taking samples from current_synthesis_segment[N_o onwards]
-        // We need to write (H_s_eff - samples_written_this_frame_ola) more samples if H_s_eff > N_o
-
+        // --- The "new" part (second half of current windowed segment) is NOT explicitly written here. ---
+        // It will be handled by the OLA of the *next* iteration when the current second half
+        // (stored in output_overlap_add_buffer) is summed with the next segment's first half.
+        /* Entire block removed:
         int needed_new_output_samples = samples_to_write_this_frame - samples_written_this_frame_ola;
-
-        if (needed_new_output_samples > 0) {
-            // Source for these new samples is current_synthesis_segment[N_o] onwards
-            // We directly copy these, as they are already tapered by the full sine window.
-            for (int j = 0; j < needed_new_output_samples; ++j) {
-                if (output_samples_written < max_output_samples) {
-                    if ((N_o + j) < N) { // Ensure we don't read past current_synthesis_segment bounds
-                        output_buffer[output_samples_written++] = state->current_synthesis_segment[N_o + j];
-                        samples_written_this_frame_new++;
-                    } else {
-                        // Should not happen if H_s_eff is clamped correctly (e.g., <= N) and N_o = N/2
-                        // If H_s_eff asks for more than N total samples from one segment, this is an issue.
-                        // Current H_s_eff clamping is 3N/4. Max samples from segment is N.
-                        // Max OLA part is N/2. Max new part needed is 3N/4 - N/2 = N/4.
-                        // So we read up to N/2 + N/4 = 3N/4 from current_synthesis_segment. This is fine.
-                        app_log("WARNING", "WSOLA: New part tried to read beyond current_synthesis_segment. N_o=%d, j=%d, N=%d", N_o, j, N);
-                        output_buffer[output_samples_written++] = 0; // Pad with silence if logic error
-                    }
-                } else {
-                    break; // Output buffer full
-                }
-            }
-        }
+        if (needed_new_output_samples > 0) { ... }
+        */
         
         // Update the output_overlap_add_buffer with the tail (second half) of the current *windowed* synthesis segment
-        // This is N_o samples from current_synthesis_segment[N_o] to current_synthesis_segment[N-1]
-        if (N_o > 0) { // Ensure N_o is positive, which it should be if N > 0
+        if (N_o > 0) { 
              memcpy(state->output_overlap_add_buffer, state->current_synthesis_segment + N_o, N_o * sizeof(short));
         }
 
-        // Update input stream pointers
-        state->next_ideal_input_frame_start_sample_offset += H_a; // Advance ideal input marker by one analysis hop
+        // Update input stream pointers for time scaling.
+        // Advance by H_a (which is N_o) scaled by the speed factor.
+        state->next_ideal_input_frame_start_sample_offset += (int)round((double)H_a / state->current_speed_factor);
+        state->total_input_samples_processed = state->next_ideal_input_frame_start_sample_offset; // Approximation
 
-        // Update total samples processed and generated - this needs to be more precise
-        // state->total_output_samples_generated += (output count in this iteration)
-        // state->total_input_samples_processed = state->next_ideal_input_frame_start_sample_offset; (roughly)
-
-        // Discard old data from ring buffer that's no longer needed for search or processing
-        // Oldest sample needed for next search: state->next_ideal_input_frame_start_sample_offset - S_w
-        // (actually, it's for an N_o segment starting there)
+        // Discard old data from ring buffer (logic for this remains the same)
         long long min_retainable_abs_offset = state->next_ideal_input_frame_start_sample_offset - state->search_window_samples - N_o; 
         if (min_retainable_abs_offset < 0) min_retainable_abs_offset = 0;
 
