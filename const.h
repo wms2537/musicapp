@@ -92,22 +92,22 @@ typedef struct {
 // These are floating point, conversion/scaling to fixed-point might be needed if performance is critical
 // and floating point operations are slow on the target. Assuming floating point for now.
 const FIRFilter FIR_NORMAL = {
-    "Normal (Flat)",
-    {1.0, 0.0, 0.0, 0.0, 0.0}, // Simplest: passes signal through
-    1 // Only one tap needed for identity
+    .name = "Normal (Flat)",
+    .coeffs = {1.0, 0.0, 0.0, 0.0, 0.0}, // Simplest: passes signal through
+    .num_taps = 1 // Only one tap needed for identity
 };
 
 // 2. Bass Boost (Illustrative - very simple low-pass-like, not a proper bass boost)
 // This is a very naive example. A real bass boost would involve a low-shelf filter.
 const FIRFilter FIR_BASS_BOOST = {
-    "Bass Boost",
+    .name = "Bass Boost",
     // Example: A simple averaging filter which acts as a low-pass filter.
     // For more pronounced bass, coefficients would be designed to boost low frequencies.
     // These coefficients are arbitrary and will likely need significant tuning.
     // For simplicity, let's try a 5-tap filter that slightly emphasizes earlier samples.
     // This is NOT a well-designed bass boost, just a placeholder.
-    {0.4, 0.3, 0.2, 0.1, 0.05}, // Needs normalization if sum != 1, and proper design
-    5
+    .coeffs = {0.4, 0.3, 0.2, 0.1, 0.05}, // Needs normalization if sum != 1, and proper design
+    .num_taps = 5
 };
 
 // 3. Treble Boost (Illustrative - very simple high-pass-like, not a proper treble boost)
@@ -117,15 +117,9 @@ const FIRFilter FIR_BASS_BOOST = {
 // { -0.1, -0.2, 0.6, -0.2, -0.1} - sum to 0, careful with gain
 // Let's try one that attempts to sharpen, again, placeholder:
 const FIRFilter FIR_TREBLE_BOOST = {
-    "Treble Boost",
-    {-0.1, -0.15, 0.5, -0.15, -0.1}, // Sum is 0, this will likely reduce overall volume. Needs proper design.
-                                 // A better simple approach might be { -0.5, 1.0, -0.5 } (sharpening) - sum is 0
-                                 // Or more like: {0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1} // for smoothing, then accentuate differences
-                                 // This is hard to make meaningful without design tools.
-                                 // Let's use a very simple high-pass like FIR (derivative-like)
-                                 // This will also need normalization and careful gain adjustment.
-    {0.5, -0.5, 0.0, 0.0, 0.0},  // Simple first-order difference (scaled) - crude high-pass.
-    2
+    .name = "Treble Boost",
+    .coeffs = {0.5, -0.5, 0.0, 0.0, 0.0},  // Simple first-order difference (scaled) - crude high-pass.
+    .num_taps = 2
 };
 
 // --- WSOLA (Waveform Similarity Overlap-Add) for Pitch-Preserving Speed Control ---
@@ -172,6 +166,10 @@ typedef struct {
     // Internal buffer to hold the current segment selected for synthesis
     // This helps avoid reading directly from input_buffer_ring if it wraps around mid-segment.
     short* current_synthesis_segment; // Size: analysis_frame_samples
+
+    // Tracks the nominal starting sample index in the continuous input stream 
+    // from where the *next* ideal analysis frame should begin.
+    long long next_ideal_input_frame_start_sample_offset;
 
 } WSOLA_State;
 

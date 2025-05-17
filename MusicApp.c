@@ -85,9 +85,14 @@ short fir_history[MAX_FIR_TAPS -1]; // Buffer to store previous samples for FIR 
 WSOLA_State *wsola_state = NULL;
 
 // --- WSOLA Function Prototypes ---
-static void generate_hanning_window(short *window, int length);
+static void generate_hanning_window(float *float_window, int length);
 static float calculate_normalized_cross_correlation(const short *segment1, const short *segment2, int length);
-static int find_best_match_segment(const WSOLA_State *state, const short *target_segment, int *best_offset_ptr);
+static float find_best_match_segment(
+    const WSOLA_State *state, 
+    const short *target_segment_for_comparison, 
+    int ideal_search_center_ring_idx, 
+    int *best_segment_start_offset_from_ideal_center_ptr
+);
 
 bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_arg, double initial_speed_factor_arg, 
                 int analysis_frame_ms_arg, float overlap_percentage_arg, int search_window_ms_arg);
@@ -990,9 +995,9 @@ static bool get_segment_from_ring_buffer(const WSOLA_State *state, int start_ind
 // Returns: The highest correlation value found. If no valid segment found, returns a very low value (e.g. -2.0f).
 static float find_best_match_segment(
     const WSOLA_State *state, 
-    const short *target_segment_for_comparison, // This is of length state->overlap_samples
-    int ideal_search_center_ring_idx,      // Center of the search in the input ring buffer
-    int *best_segment_start_offset_from_ideal_center_ptr // Output: offset of the best N-sample segment
+    const short *target_segment_for_comparison, 
+    int ideal_search_center_ring_idx, 
+    int *best_segment_start_offset_from_ideal_center_ptr
 ) {
     if (!state || !target_segment_for_comparison || !best_segment_start_offset_from_ideal_center_ptr) {
         return -2.0f; // Indicate error
@@ -1164,6 +1169,7 @@ bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_a
     
     s->total_input_samples_processed = 0;
     s->total_output_samples_generated = 0;
+    s->next_ideal_input_frame_start_sample_offset = 0; // Start at the beginning of the stream
 
     *state_ptr = s;
     app_log("INFO", "wsola_init: WSOLA state initialized successfully. N=%d, No=%d, Ha=%d, Sw=%d, InputRingCap=%d",
