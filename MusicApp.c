@@ -1061,7 +1061,7 @@ static float calculate_normalized_cross_correlation(const short *segment1, const
 static bool get_segment_from_ring_buffer(const WSOLA_State *state, int start_index_in_ring, int length, short *output_segment) {
     if (!state || !state->input_buffer_ring || !output_segment || length <= 0) return false;
     if (length > state->input_buffer_content) { // Not enough data in the entire buffer
-        // app_log("DEBUG", "get_segment: not enough content (%d) for length %d", state->input_buffer_content, length);
+        app_log("DEBUG", "get_segment: not enough content (%d) for length %d", state->input_buffer_content, length);
         return false;
     }
 
@@ -1132,7 +1132,7 @@ static float find_best_match_segment(
         }
         // If no correlation was found (e.g. all segments were unavailable in a search window)
         if (max_correlation == -2.0f) { 
-            // app_log("DEBUG", "find_best_match: No valid correlation found in search window. Defaulting to offset 0.");
+            app_log("DEBUG", "find_best_match: No valid correlation found in search window. Defaulting to offset 0.");
             *best_segment_start_offset_from_ideal_center_ptr = 0;
             // Optionally, could try to get the segment at offset 0 if all others failed, but current loop structure implies it was tried if S_w > 0.
             // If an error occurred or no segment was available, max_correlation remains -2.0f
@@ -1319,19 +1319,19 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
     int H_s_eff = (int)round((double)H_a / state->current_speed_factor);
     if (H_s_eff <= 0) H_s_eff = 1; // Ensure progress even at very high speed factors
 
-    // app_log("DEBUG", "WSOLA_PROCESS_ENTRY: num_input=%d, max_output=%d, current_speed=%.2f, H_s_eff=%d, input_content_start=%d", 
-    //        num_input_samples, max_output_samples, state->current_speed_factor, H_s_eff, state->input_buffer_content);
+    app_log("DEBUG", "WSOLA_PROCESS_ENTRY: num_input=%d, max_output=%d, current_speed=%.2f, H_s_eff=%d, input_content_start=%d", 
+           num_input_samples, max_output_samples, state->current_speed_factor, H_s_eff, state->input_buffer_content);
 
     int loop_iterations = 0;
     while (output_samples_written + H_s_eff <= max_output_samples) {
         loop_iterations++;
-        // app_log("DEBUG", "WSOLA_PROCESS_LOOP_ITER: iter=%d, out_written=%d, H_s_eff=%d", loop_iterations, output_samples_written, H_s_eff); // ADD THIS LOG
+        app_log("DEBUG", "WSOLA_PROCESS_LOOP_ITER: iter=%d, out_written=%d, H_s_eff=%d", loop_iterations, output_samples_written, H_s_eff); // ADD THIS LOG
 
         long long latest_required_stream_offset = state->next_ideal_input_frame_start_sample_offset + N + state->search_window_samples;
         long long latest_available_stream_offset = state->input_ring_buffer_stream_start_offset + state->input_buffer_content;
 
         if (latest_available_stream_offset < latest_required_stream_offset) {
-            // app_log("DEBUG", "WSOLA_LOOP_BREAK_NO_DATA: iter=%d, avail=%lld, req=%lld", loop_iterations, latest_available_stream_offset, latest_required_stream_offset); // SIMPLIFIED LOG
+            app_log("DEBUG", "WSOLA_LOOP_BREAK_NO_DATA: iter=%d, avail=%lld, req=%lld", loop_iterations, latest_available_stream_offset, latest_required_stream_offset); // SIMPLIFIED LOG
             break; 
         }
 
@@ -1454,8 +1454,8 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         if (state->input_buffer_content > 0) { 
             samples_to_discard = (int)(min_retainable_abs_offset - current_ring_start_abs_offset);
         }
-        // app_log("DEBUG", "WSOLA_DISCARD_CHECK: iter=%d, min_retain_abs=%lld, ring_start_abs=%lld, content_before=%d, samples_to_discard_calc=%d", 
-        //    loop_iterations, min_retainable_abs_offset, current_ring_start_abs_offset, state->input_buffer_content, samples_to_discard);
+        app_log("DEBUG", "WSOLA_DISCARD_CHECK: iter=%d, min_retain_abs=%lld, ring_start_abs=%lld, content_before=%d, samples_to_discard_calc=%d", 
+           loop_iterations, min_retainable_abs_offset, current_ring_start_abs_offset, state->input_buffer_content, samples_to_discard);
 
         if (samples_to_discard > 0) {
             if (samples_to_discard > state->input_buffer_content) {
@@ -1465,15 +1465,15 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
             state->input_buffer_read_pos = (state->input_buffer_read_pos + samples_to_discard) % state->input_buffer_capacity;
             state->input_buffer_content -= samples_to_discard;
             state->input_ring_buffer_stream_start_offset += samples_to_discard;
-            // app_log("DEBUG", "WSOLA_DISCARD_DONE: iter=%d, discarded=%d, new_ring_start_abs=%lld, new_read_pos=%d, new_content=%d", 
-            //    loop_iterations, samples_to_discard, state->input_ring_buffer_stream_start_offset, state->input_buffer_read_pos, state->input_buffer_content);
+            app_log("DEBUG", "WSOLA_DISCARD_DONE: iter=%d, discarded=%d, new_ring_start_abs=%lld, new_read_pos=%d, new_content=%d", 
+               loop_iterations, samples_to_discard, state->input_ring_buffer_stream_start_offset, state->input_buffer_read_pos, state->input_buffer_content);
         } else if (samples_to_discard < 0) {
-             // app_log("DEBUG", "WSOLA_DISCARD_SKIP: iter=%d, samples_to_discard_calc was %d (negative).", loop_iterations, samples_to_discard);
+             app_log("DEBUG", "WSOLA_DISCARD_SKIP: iter=%d, samples_to_discard_calc was %d (negative).", loop_iterations, samples_to_discard);
         }
     } // End of while loop
 
-    // app_log("DEBUG", "WSOLA_PROCESS_EXIT: loop_iters=%d, output_written=%d, input_content_end=%d, next_ideal_start=%lld", 
-    //    loop_iterations, output_samples_written, state->input_buffer_content, state->next_ideal_input_frame_start_sample_offset);
+    app_log("DEBUG", "WSOLA_PROCESS_EXIT: loop_iters=%d, output_written=%d, input_content_end=%d, next_ideal_start=%lld", 
+       loop_iterations, output_samples_written, state->input_buffer_content, state->next_ideal_input_frame_start_sample_offset);
 
     // --- Unconditional Discard Logic --- 
     // Always try to discard old data after a processing pass, regardless of loop iterations.
@@ -1486,8 +1486,8 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
 
         int samples_to_discard = (int)(min_retainable_abs_offset - state->input_ring_buffer_stream_start_offset);
         
-        // app_log("DEBUG", "WSOLA_POST_DISCARD_CHECK: min_retain_abs=%lld, ring_start_abs=%lld, content_before=%d, samples_to_discard_calc=%d", 
-        //    min_retainable_abs_offset, state->input_ring_buffer_stream_start_offset, state->input_buffer_content, samples_to_discard);
+        app_log("DEBUG", "WSOLA_POST_DISCARD_CHECK: min_retain_abs=%lld, ring_start_abs=%lld, content_before=%d, samples_to_discard_calc=%d", 
+           min_retainable_abs_offset, state->input_ring_buffer_stream_start_offset, state->input_buffer_content, samples_to_discard);
 
         if (samples_to_discard > 0) {
             if (samples_to_discard > state->input_buffer_content) {
@@ -1497,8 +1497,8 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
             state->input_buffer_read_pos = (state->input_buffer_read_pos + samples_to_discard) % state->input_buffer_capacity;
             state->input_buffer_content -= samples_to_discard;
             state->input_ring_buffer_stream_start_offset += samples_to_discard;
-            // app_log("DEBUG", "WSOLA_POST_DISCARD_DONE: discarded=%d, new_ring_start_abs=%lld, new_read_pos=%d, new_content=%d", 
-            //    samples_to_discard, state->input_ring_buffer_stream_start_offset, state->input_buffer_read_pos, state->input_buffer_content);
+            app_log("DEBUG", "WSOLA_POST_DISCARD_DONE: discarded=%d, new_ring_start_abs=%lld, new_read_pos=%d, new_content=%d", 
+               samples_to_discard, state->input_ring_buffer_stream_start_offset, state->input_buffer_read_pos, state->input_buffer_content);
         }
     }
     // --- End Unconditional Discard Logic ---
