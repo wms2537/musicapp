@@ -1248,7 +1248,7 @@ static float calculate_normalized_cross_correlation(const short *segment1, const
     
     // For severe energy imbalance (one segment much louder than other)
     if (energy_ratio < 0.3) {
-        correlation *= energy_ratio * 1.5; // More aggressive scaling for WSOLA
+        correlation *= sqrtf(energy_ratio); // Softened penalty
     }
     
     return (float)correlation;
@@ -1355,8 +1355,17 @@ static long long find_best_match_segment(
                 continue;
             }
             
+            // Symmetrize NCC inputs: Apply Hanning window to candidate_segment
+            // to match the pre-windowed nature of target_segment_for_comparison.
+            short windowed_candidate_for_ncc[N_o]; // N_o is overlap_samples
+            for (int k = 0; k < N_o; ++k) {
+                // state->analysis_window_function is Q15 short.
+                long long val_ll = (long long)candidate_segment[k] * state->analysis_window_function[k];
+                windowed_candidate_for_ncc[k] = (short)(val_ll >> 15);
+            }
+
             float corr = calculate_normalized_cross_correlation(
-                target_segment_for_comparison, candidate_segment, N_o);
+                target_segment_for_comparison, windowed_candidate_for_ncc, N_o);
             
             // Progressive continuity bias - stronger for offsets closer to previous match
             // and when previous correlation was strong
@@ -1406,8 +1415,15 @@ static long long find_best_match_segment(
                     continue;
                 }
                 
+                // Symmetrize NCC inputs: Apply Hanning window to candidate_segment
+                short windowed_candidate_for_ncc_fine[N_o];
+                for (int k = 0; k < N_o; ++k) {
+                    long long val_ll = (long long)candidate_segment[k] * state->analysis_window_function[k];
+                    windowed_candidate_for_ncc_fine[k] = (short)(val_ll >> 15);
+                }
+
                 float corr = calculate_normalized_cross_correlation(
-                    target_segment_for_comparison, candidate_segment, N_o);
+                    target_segment_for_comparison, windowed_candidate_for_ncc_fine, N_o);
                 
                 // Fine search gets a smaller continuity bias
                 float continuity_factor = fabsf((float)(offset - previous_best_offset)) / (float)S_w;
@@ -1474,10 +1490,11 @@ static long long find_best_match_segment(
                    
             *best_segment_start_offset_from_ideal_center_ptr = constrained_offset;
             
-            // Use a modest positive correlation to ensure it's treated reasonably
-            // in downstream calculations
-            max_correlation_float = 0.3f;
-            max_correlation = 300000; // 0.3 scaled
+            // The following lines artificially inflated the correlation.
+            // We are removing this to allow the actual low correlation to propagate
+            // to previous_correlation for the next frame.
+            // max_correlation_float = 0.3f; 
+            // max_correlation = 300000; // 0.3 scaled
         }
     } else {
         consecutive_low_correlations = 0; // Reset counter with successful match
@@ -2021,16 +2038,13 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         // Keep a larger safety margin around the next search window
         // This prevents accidental discarding of data we might need
         // Especially important when changing speeds rapidly
-        const int SAFETY_MARGIN = MAX(state->overlap_samples, state->search_window_samples);
+        // const int SAFETY_MARGIN = MAX(state->overlap_samples, state->search_window_samples); // SAFETY_MARGIN not used in the revised logic below
         
         // Most conservative approach: 
         // 1. Keep data needed for next search window
-        // 2. Add overlap samples for matching 
-        // 3. Add safety margin to handle speed changes
+        // The earliest sample needed is state->next_ideal_input_frame_start_sample_offset - state->search_window_samples.
         long long min_retainable_abs_offset = state->next_ideal_input_frame_start_sample_offset 
-                                            - state->search_window_samples 
-                                            - state->overlap_samples
-                                            - SAFETY_MARGIN;
+                                            - state->search_window_samples; 
                                             
         // Never discard data before stream position 0
         if (min_retainable_abs_offset < 0) min_retainable_abs_offset = 0;
