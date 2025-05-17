@@ -2074,7 +2074,3 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
 
     return output_samples_written;
 }
-
-static float hpf_prev_input = 0.0f;
-static float hpf_prev_output = 0.0f;
-static const float HPF_ALPHA = 0.995f; // High-pass filter coefficient (~70Hz cutoff at 44.1kHz)
