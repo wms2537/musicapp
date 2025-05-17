@@ -276,28 +276,27 @@ This document tracks the implementation of features and major changes in the Mus
 
 # Implementation Plan for MusicApp WSOLA Speed Control Fix
 
-## Issue: WSOLA (Waveform Similarity Overlap-Add) Algorithm Not Working Properly
+## WSOLA Algorithm Speed Control Bug Fix
 
-Based on log analysis and code review, the WSOLA algorithm for pitch-preserving speed control wasn't functioning correctly, causing audio distortion when playing at different speeds.
+### Issue: WSOLA (Waveform Similarity Overlap-Add) Algorithm Not Working Properly
 
-## Fix Implementation Steps
+Based on log analysis and code review, the WSOLA algorithm for pitch-preserving speed control wasn't functioning correctly, causing audio distortion and random noise when playing at different speeds.
 
-1. **Fix synthesis hop calculation in speed changing code** - Done
-   Improved how the synthesis hop is calculated when the user changes playback speed. For slower speeds (< 1.0), synthesis hop should be larger than analysis hop, and for faster speeds (> 1.0), synthesis hop should be smaller. Added safety checks to ensure positive hop values.
+### Fix Implementation Steps
 
-2. **Update synthesis hop initialization in wsola_init** - Done
-   Enhanced the synthesis hop calculation during initialization to prevent issues with extreme speed factors. Improved code to ensure the hop value is always positive.
+1. **Improve windowing in cross-correlation calculation** - Done
+   Modified the `calculate_normalized_cross_correlation` function to use a Hanning window when comparing segments. This focuses the correlation on the center portions of frames and reduces the impact of edge discontinuities, leading to better matching.
 
-3. **Improve wsola_process synthesis hop handling** - Done
-   Added better handling of the speed factor within the wsola_process function, including proper updating of the synthesis_hop_samples property and improved safety checks.
+2. **Add temporal continuity in segment selection** - Done
+   Implemented a mechanism in `find_best_match_segment` to maintain continuity between consecutive frames by biasing the search toward offsets near the previous best offset. This significantly reduces the "jumpy" behavior that was causing discontinuities in the audio.
 
-4. **Enhance correlation threshold for better matching** - Done
-   Increased the threshold for low correlation detection from 0.1f to 0.25f to ensure that matches with insufficient correlation are properly rejected, improving audio quality.
+3. **Implement weighted offset smoothing** - Done
+   Added a system to blend current and previous offsets when correlations are low, creating a more stable audio output during difficult segments. This is especially important for noise reduction in complex audio passages.
 
-5. **Improve normalized cross-correlation calculation** - Done
-   Enhanced the cross-correlation function to better handle audio-specific characteristics:
-   - Added energy ratio check to prevent poor matches between segments with very different energy levels
-   - Improved handling of zero-mean correlation to better focus on waveform shapes
-   - Added better handling of near-silence segments
+4. **Replace overlap-add with proper crossfade** - Done
+   Changed the simple overlap-add mechanism to use a proper crossfade with cosine/sine-based windowing. This creates much smoother transitions between audio frames and eliminates clicks and pops at frame boundaries.
 
-These changes collectively improved the WSOLA algorithm's ability to find good matching segments and produce smooth audio output when changing playback speed, addressing both distortion and performance issues that were previously observed.
+5. **Adjust energy ratio handling** - Done
+   Modified how energy ratio affects correlation scores to better handle silence and low-energy segments. This helps prevent the algorithm from making poor matches in quiet sections of audio.
+
+These changes work together to significantly improve the audio quality during speed adjustments, eliminating most of the random noise that was previously occurring when playing at speeds other than 1.0x.
