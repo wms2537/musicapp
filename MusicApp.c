@@ -1127,6 +1127,14 @@ static long long find_best_match_segment(
     int ideal_search_center_ring_idx,           // Ideal start of search in input_buffer_ring
     int *best_segment_start_offset_from_ideal_center_ptr)
 {
+    // --- TEMPORARY SIMPLIFICATION: Always choose ideal offset (0) --- 
+    DBG("find_best_match: TEMPORARILY FORCING OFFSET 0, NCC 1.0");
+    if (best_segment_start_offset_from_ideal_center_ptr) {
+        *best_segment_start_offset_from_ideal_center_ptr = 0;
+    }
+    return (long long)(1.0f * 1000000.0f); // Return perfect correlation scaled
+    // --- END TEMPORARY SIMPLIFICATION ---
+
     if (!state || !target_segment_for_comparison || !best_segment_start_offset_from_ideal_center_ptr) {
         app_log("ERROR", "find_best_match: NULL pointer argument.");
         if (best_segment_start_offset_from_ideal_center_ptr) *best_segment_start_offset_from_ideal_center_ptr = 0;

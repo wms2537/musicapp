@@ -177,7 +177,9 @@ alwaysApply: false
           *Done*
           *Summary: To cleanly test WSOLA's impact, removed the 1.0x speed bypass from within `wsola_process`. Instead, modified the `use_wsola` flag condition in `main()` to only be true if speed is *not* 1.0x (in addition to S16_LE mono format). This ensures that at 1.0x speed, the application uses its standard direct playback path (which should be clean and without pauses), and WSOLA is only engaged for other speeds. FIR filter remains bypassed for now. User confirmed 1.0x speed is now working correctly.
           *Done*
-          *Summary: Re-enabled FIR filter processing by removing the temporary bypass in `apply_fir_filter`. This is to test if the FIR filter (with its O(1) circular history update) works correctly at normal (1.0x) speed. If 1.0x speed remains clean, it further isolates the distortion to WSOLA when time-scaling.
+          *Summary: Re-enabled FIR filter processing by removing the temporary bypass in `apply_fir_filter`. This is to test if the FIR filter (with its O(1) circular history update) works correctly at normal (1.0x) speed. If 1.0x speed remains clean, it further isolates the distortion to WSOLA when time-scaling. User confirmed 1.0x speed with FIR re-enabled is working correctly. Distortion persists for non-1.0x speeds.
+          *Done*
+          *Summary: The problem is now isolated to `wsola_process` when time-scaling (speed != 1.0x). The FIR filter and 1.0x speed playback are clean. Requesting logs for 0.5x and 2.0x speed to examine NCC values and best_offset from `find_best_match_segment` to diagnose the distortion during active WSOLA processing.
 
   6.  **Update Documentation (README.md)**:
       *   Reflect that playback speed control now preserves pitch.
