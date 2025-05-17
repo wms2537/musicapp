@@ -400,6 +400,8 @@ bool load_track(int track_idx) {
     // Reset playback state for the new track
     playback_paused = false; 
     initialize_fir_history(); // Reset FIR history for new track
+    hpf_prev_input = 0.0f;    // Reset HPF state for new track
+    hpf_prev_output = 0.0f;   // Reset HPF state for new track
 
     // --- Re-initialize WSOLA for the new track if necessary ---
     if (wsola_state != NULL) {
@@ -710,9 +712,17 @@ int main(int argc, char *argv[]) {
                     if (playback_paused) {
                         snd_pcm_pause(pcm_handle, 1);
                         app_log("INFO", "Playback PAUSED. Press 'p' to resume.");
+                        // Reset HPF state on pause
+                        hpf_prev_input = 0.0f;
+                        hpf_prev_output = 0.0f;
+                        initialize_fir_history(); // Reset FIR as well
                     } else {
                         snd_pcm_pause(pcm_handle, 0);
                         app_log("INFO", "Playback RESUMED.");
+                        // Reset HPF state on resume
+                        hpf_prev_input = 0.0f;
+                        hpf_prev_output = 0.0f;
+                        initialize_fir_history(); // Reset FIR as well
                     }
                 }
                 else if (c_in == 'f') { // Seek Forward
@@ -1892,17 +1902,13 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
             break; 
         }
 
-        // The following block for applying Hanning window to state->current_synthesis_segment is REMOVED.
-        // The synthesis segment should NOT be windowed here because the fade_out/fade_in
-        // windows used in the overlap-add stage will perform the necessary blending.
-        // Applying a window here and then again during OLA causes double windowing.
-        /*
-        // Apply Q15 Hanning window (state->analysis_window_function)
-        for (int i = 0; i < N; ++i) {
+        // Apply the Q15 Hanning analysis window to the entire current_synthesis_segment (N samples).
+        // This tapers the full segment, ensuring smooth transitions when blended by the sqrt-Hanning OLA.
+        // This is crucial to prevent clicks at the boundary between the OLA region and the new part.
+        for (int i = 0; i < N; ++i) { // N is state->analysis_frame_samples
             long long val_ll = (long long)state->current_synthesis_segment[i] * state->analysis_window_function[i];
             state->current_synthesis_segment[i] = (short)(val_ll >> 15); // Q15 scaling
         }
-        */
 
         int samples_to_write_this_frame = H_s_eff;
         int samples_written_this_frame_ola = 0;
