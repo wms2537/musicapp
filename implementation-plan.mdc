@@ -1,0 +1,66 @@
+---
+description:
+globs:
+alwaysApply: false
+---
+# Implementation Plan for MusicApp Features
+
+## Feature Checklist
+
+- [ ] 1. 调节上一曲和下一曲 (Previous/Next Track) (15%)
+- [ ] 2. 多种倍速播放【0.5，1，1.5，2 倍速】(Playback Speed Control) (25%)
+- [ ] 3. 快进快退【快进 10s，快退 10s】(Seek Forward/Backward) (20%)
+- [ ] 4. 暂停继续 (Pause/Resume) (10%)
+- [ ] 5. 日志输出 (Logging Output) (15%)
+
+## Detailed Steps
+
+### 1. Pause/Resume Functionality
+- Add a global state variable `playback_paused`.
+- Modify the main loop to check this state.
+- Use `snd_pcm_pause()` to pause and resume ALSA playback.
+- Assign a key (e.g., 'p') for toggling pause/resume.
+- *Done*
+  - Summary: Added `playback_paused` global boolean. Modified the main playback loop to check for 'p' key input. Used `snd_pcm_pause(pcm_handle, 1)` for pause and `snd_pcm_pause(pcm_handle, 0)` for resume. Added a short `usleep` during pause to reduce CPU load.
+
+### 2. Seek Forward/Backward Functionality
+- Define seek duration (e.g., 10 seconds).
+- Add key bindings (e.g., 'f' for forward, 'b' for backward).
+- Implement `fseek()` on the music file pointer `fp`.
+- Calculate seek offset using `wav_header.byte_rate`.
+- Consider ALSA buffer state after seeking (e.g., `snd_pcm_drop()` or `snd_pcm_prepare()`).
+- *Done*
+  - Summary: Added handling for 'f' (forward) and 'b' (backward) keys. Used `fseek(fp, offset, SEEK_CUR)` with `offset = +/- 10 * wav_header.byte_rate`. For backward seek, if it fails (e.g., trying to seek before file start), it seeks to the beginning of audio data (after WAV header). Noted that ALSA buffer might need reset for smoother seeking, but this is left as an optional improvement for now.
+
+### 3. Previous/Next Track Functionality
+- Modify `main()` to accept a list of music files or a playlist file.
+- Store the list of tracks and the current track index.
+- Implement functions `play_next_track()` and `play_previous_track()`.
+- These functions will close the current file, open the new file, and re-initialize playback if necessary.
+- Add key bindings (e.g., 'N' for next, 'P' for previous - distinct from 'p' for pause).
+- *Done*
+  - Summary: Modified `main` to accept multiple filenames as non-option arguments. Added `music_files` array, `num_music_files`, `current_track_idx` globals. Created `load_track()` to handle opening new files. Implemented '.' (next) and ',' (previous) key controls. Added auto-play to the next track upon current track completion. The `-m` option is now deprecated. Memory for `music_files` is allocated and freed. Noted that robust ALSA re-initialization between tracks with different audio parameters might be needed.
+
+### 4. Playback Speed Control
+- Research ALSA capabilities for playback speed adjustment (e.g., `snd_pcm_sw_params_set_rate_resample` or software resampling).
+- Add a global variable for current speed multiplier (0.5, 1.0, 1.5, 2.0).
+- Add key bindings to cycle through speeds.
+- Implement changes to ALSA parameters or data processing pipeline. This might involve recalculating buffer sizes or sample rates dynamically.
+- *Partially Done*
+  - Summary: Added global variables for playback speed factors (`PLAYBACK_SPEED_FACTORS`, `NUM_SPEED_LEVELS`, `current_speed_idx`). Implemented key bindings '[' and ']' to cycle through speeds (0.5x, 1.0x, 1.5x, 2.0x) and print the selected speed. The core logic for actual speed adjustment of audio playback is NOT yet implemented and requires significant further work (software resampling or advanced ALSA features).
+
+### 5. Logging Output
+- Review existing `printf` statements.
+- Enhance logging for new features (state changes, errors, actions).
+- Consider adding a log level or a way to toggle verbose logging if needed.
+- If complex, consider writing logs to a file.
+- *Done*
+  - Summary: Added a `print_log_prefix()` (currently a no-op, for potential timestamping). Prefixed many existing and new user-facing messages and error messages with `LOG INFO:`, `LOG WARNING:`, or `LOG ERROR:`. Added application start and normal exit log messages. This enhances the clarity of console output based on the existing `printf` style.
+
+### General
+- Update README.md with new features and controls.
+- *Done*
+  - Summary: Created a `README.md` file. It includes sections for Features, Compilation, Usage (command-line options and interactive controls), Dependencies, and Known Issues/Future Work. It highlights that playback speed audio processing is not yet implemented.
+- Ensure error handling is robust for all new functionalities.
+- *Partially Done*
+  - Summary: Basic error handling (e.g., for file operations, memory allocation, ALSA calls) exists. Some new error messages were added. However, a comprehensive review and enhancement of error handling across all new features, especially for edge cases and recovery, would be a larger task and is considered partially addressed by the logging improvements and specific checks added.
