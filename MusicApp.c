@@ -1370,25 +1370,40 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
             }
         }
 
-        // 2. Write the new part (H_s_eff - N_o samples) from current_synthesis_segment
-        // The new part starts at index N_o in current_synthesis_segment.
-        int new_part_to_write = samples_to_write_this_frame - samples_written_this_frame_ola;
-        for (int i = 0; i < new_part_to_write; ++i) {
-            if (output_samples_written < max_output_samples) {
-                if ((N_o + i) < N) { // Ensure we don't read past current_synthesis_segment bounds
-                    output_buffer[output_samples_written++] = state->current_synthesis_segment[N_o + i];
-                    samples_written_this_frame_new++;
-                } else {
-                    // Should not happen if H_s_eff <= H_a (i.e. speed_factor >= 1) or if N_o + new_part_to_write <= N
-                    // This implies we need more samples than available in the non-overlapped part of current_synthesis_segment.
-                    // This occurs if H_s_eff > H_a (speed_factor < 1, slowing down significantly)
-                    // In this case, WSOLA might need to duplicate samples from current_synthesis_segment or use more advanced interpolation.
-                    // For now, if we run out of new samples in current_synthesis_segment, we stop writing for this frame here.
-                    app_log("WARNING", "WSOLA: H_s_eff requires more samples than available in new part of synthesis segment. Frame may be shorter.");
-                    break; 
+        // 2. Write the new part from current_synthesis_segment, potentially stretching or compressing
+        int needed_new_output_samples = samples_to_write_this_frame - samples_written_this_frame_ola;
+        if (needed_new_output_samples > 0) {
+            int available_new_samples_in_segment = N - N_o; // This is H_a
+
+            if (available_new_samples_in_segment <= 0 && needed_new_output_samples > 0) {
+                 app_log("WARNING", "WSOLA: No new samples available in synthesis segment (H_a=0), but needed %d output. Silence padding.", needed_new_output_samples);
+                 for (int i = 0; i < needed_new_output_samples; ++i) {
+                     if (output_samples_written < max_output_samples) {
+                         output_buffer[output_samples_written++] = 0; // Pad with silence
+                         samples_written_this_frame_new++;
+                     } else break;
+                 }
+            } else if (available_new_samples_in_segment > 0) {
+                double new_sample_read_cursor = 0.0;
+                // The source for these new samples is current_synthesis_segment[N_o] onwards
+                short *new_part_source = state->current_synthesis_segment + N_o;
+
+                for (int i = 0; i < needed_new_output_samples; ++i) {
+                    if (output_samples_written < max_output_samples) {
+                        int source_idx = (int)floor(new_sample_read_cursor);
+                        if (source_idx >= available_new_samples_in_segment) {
+                            source_idx = available_new_samples_in_segment - 1; // Clamp to last available sample
+                        }
+                        output_buffer[output_samples_written++] = new_part_source[source_idx];
+                        samples_written_this_frame_new++;
+                        
+                        // Advance read cursor: we want to map `needed_new_output_samples` to `available_new_samples_in_segment`
+                        // This is equivalent to resampling `available_new_samples_in_segment` to `needed_new_output_samples`
+                        new_sample_read_cursor += (double)available_new_samples_in_segment / (double)needed_new_output_samples;
+                    } else {
+                        break; // Output buffer full
+                    }
                 }
-            } else {
-                break; // Output buffer full
             }
         }
         
