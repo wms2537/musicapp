@@ -22,6 +22,13 @@
 // --- Logging Globals and Function ---
 FILE *log_fp = NULL;
 const char *LOG_FILE_NAME = "music_app.log";
+static int debug_enabled = 1; // Runtime flag to enable/disable DEBUG logs. Set to 1 for testing.
+
+// Forward declaration for app_log if DBG is defined before app_log full definition
+void app_log(const char *type, const char *format, ...);
+
+// Macro for conditional debug logging
+#define DBG(...) do { if (debug_enabled) app_log("DEBUG", __VA_ARGS__); } while(0)
 
 void app_log(const char *type, const char *format, ...) {
     if (log_fp == NULL) { // Fallback if log file couldn't be opened
