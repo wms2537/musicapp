@@ -1892,18 +1892,17 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
             break; 
         }
 
-        // Apply window function to synthesis segment
-        // The window is crucial for smooth time-domain transitions
-        
-        // The float-based synthesis_window and its generation are removed.
-        // We will consistently use the Q15 state->analysis_window_function.
-
+        // The following block for applying Hanning window to state->current_synthesis_segment is REMOVED.
+        // The synthesis segment should NOT be windowed here because the fade_out/fade_in
+        // windows used in the overlap-add stage will perform the necessary blending.
+        // Applying a window here and then again during OLA causes double windowing.
+        /*
         // Apply Q15 Hanning window (state->analysis_window_function)
-        // This was previously the fallback path, now it's the main path.
         for (int i = 0; i < N; ++i) {
             long long val_ll = (long long)state->current_synthesis_segment[i] * state->analysis_window_function[i];
             state->current_synthesis_segment[i] = (short)(val_ll >> 15); // Q15 scaling
         }
+        */
 
         int samples_to_write_this_frame = H_s_eff;
         int samples_written_this_frame_ola = 0;
