@@ -864,6 +864,17 @@ int main(int argc, char *argv[]) {
         }
 
         read_ret = fread(buff, 1, buffer_size, fp);
+
+        // Calculate num_samples_in_buff AFTER fread and BEFORE its first use
+        int num_samples_in_buff = 0;
+        if (wav_header.bits_per_sample > 0) { // Prevent division by zero
+            num_samples_in_buff = read_ret / (wav_header.bits_per_sample / 8);
+        } else {
+            app_log("ERROR", "wav_header.bits_per_sample is 0. Cannot calculate num_samples_in_buff.");
+            // Handle error appropriately - perhaps break or continue, depending on desired behavior
+            // For now, let it proceed, but subsequent logic might fail or produce 0 samples.
+        }
+
         if (read_ret == 0) {
             app_log("INFO", "End of music file input! (fread returned 0)");
             // --- Autoplay Next Track --- 
