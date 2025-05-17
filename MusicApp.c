@@ -1369,6 +1369,39 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
     if (!state || !output_buffer || max_output_samples <= 0) {
         return 0; // No state or no place to put output
     }
+
+    // --- TEMPORARY BYPASS FOR 1.0x SPEED --- 
+    if (fabs(state->current_speed_factor - 1.0) < 1e-6) {
+        DBG("WSOLA_PROCESS: Speed is 1.0x, performing direct copy bypass.");
+        int samples_to_copy = (num_input_samples < max_output_samples) ? num_input_samples : max_output_samples;
+        if (input_samples && samples_to_copy > 0) {
+            memcpy(output_buffer, input_samples, samples_to_copy * sizeof(short));
+            // Nullify WSOLA internal buffers and reset counters as if it processed, to avoid issues if speed changes later
+            // This is a bit crude; a proper flush/reset might be needed if switching from this bypass to active WSOLA.
+            // For now, just ensure input buffer doesn't grow indefinitely if 1.0x is used for a while.
+            wsola_add_input_to_ring_buffer(state, input_samples, num_input_samples); // Still add to ring buffer
+            
+            long long min_retainable_abs_offset = state->next_ideal_input_frame_start_sample_offset 
+                                            - state->search_window_samples 
+                                            - state->overlap_samples; 
+            if (min_retainable_abs_offset < 0) min_retainable_abs_offset = 0;
+            int samples_to_discard = (int)(min_retainable_abs_offset - state->input_ring_buffer_stream_start_offset);
+            if (samples_to_discard > 0) {
+                if (samples_to_discard > state->input_buffer_content) {
+                    samples_to_discard = state->input_buffer_content;
+                }
+                state->input_buffer_read_pos = (state->input_buffer_read_pos + samples_to_discard) % state->input_buffer_capacity;
+                state->input_buffer_content -= samples_to_discard;
+                state->input_ring_buffer_stream_start_offset += samples_to_discard;
+            }
+            state->next_ideal_input_frame_start_sample_offset += num_input_samples; // Advance ideal input marker
+            state->total_output_samples_generated += samples_to_copy;
+            return samples_to_copy;
+        }
+        return 0;
+    }
+    // --- END TEMPORARY BYPASS ---
+
     if (input_samples && num_input_samples > 0) {
         wsola_add_input_to_ring_buffer(state, input_samples, num_input_samples);
     }
