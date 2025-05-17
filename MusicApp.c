@@ -75,6 +75,69 @@ const double PLAYBACK_SPEED_FACTORS[] = {0.5, 1.0, 1.5, 2.0};
 const int NUM_SPEED_LEVELS = sizeof(PLAYBACK_SPEED_FACTORS) / sizeof(PLAYBACK_SPEED_FACTORS[0]);
 int current_speed_idx = 1; // Index for 1.0x speed
 
+// --- Equalizer Globals ---
+const FIRFilter *EQ_PRESETS[] = {&FIR_NORMAL, &FIR_BASS_BOOST, &FIR_TREBLE_BOOST};
+const int NUM_EQ_PRESETS = sizeof(EQ_PRESETS) / sizeof(EQ_PRESETS[0]);
+int current_eq_idx = 0; // Default to Normal/Flat
+short fir_history[MAX_FIR_TAPS -1]; // Buffer to store previous samples for FIR calculation
+
+void initialize_fir_history() {
+    for (int i = 0; i < MAX_FIR_TAPS - 1; ++i) {
+        fir_history[i] = 0;
+    }
+}
+
+// Applies an FIR filter to a block of 16-bit PCM audio samples.
+// Input and output buffers can be the same for in-place processing if carefully managed,
+// but separate buffers are safer and often clearer.
+// This function assumes single-channel (mono) data for simplicity or that stereo data is interleaved
+// and will be processed sample by sample (left, right, left, right...)
+// If stereo, the filter is applied independently to each channel if called per channel,
+// or if called on the whole buffer, it will mix channels based on tap count if not careful.
+// For true stereo FIR, you'd typically process each channel with its own history.
+// This implementation processes samples sequentially, assuming they are mono or caller handles stereo separation.
+void apply_fir_filter(short *input_buffer, short *output_buffer, int num_samples, const FIRFilter *filter) {
+    if (filter == NULL || filter->num_taps == 0 || filter->num_taps > MAX_FIR_TAPS) {
+        // Invalid filter, pass through or handle error
+        if (input_buffer != output_buffer) {
+            memcpy(output_buffer, input_buffer, num_samples * sizeof(short));
+        }
+        return;
+    }
+
+    // For each output sample
+    for (int i = 0; i < num_samples; ++i) {
+        double filtered_sample = 0.0;
+
+        // Current input sample
+        short current_sample = input_buffer[i];
+
+        // Convolve with filter coefficients
+        // Start with the current sample and the first coefficient
+        filtered_sample += current_sample * filter->coeffs[0];
+
+        // Then convolve with historical samples
+        for (int j = 1; j < filter->num_taps; ++j) {
+            filtered_sample += fir_history[filter->num_taps - 1 - j] * filter->coeffs[j];
+        }
+
+        // Update history: Shift history and add current_sample
+        // fir_history stores [y(n-N+1) ... y(n-2) y(n-1)] where N is num_taps
+        // Shift from oldest to newest position before inserting new sample
+        for (int j = 0; j < filter->num_taps - 2; ++j) {
+            fir_history[j] = fir_history[j+1];
+        }
+        if (filter->num_taps > 1) { // Only store history if filter has more than one tap
+            fir_history[filter->num_taps - 2] = current_sample; // Newest historical sample is current_sample
+        }
+
+        // Clamp and store the result
+        // Output is 16-bit, so clamp to short range
+        if (filtered_sample > 32767.0) filtered_sample = 32767.0;
+        else if (filtered_sample < -32768.0) filtered_sample = -32768.0;
+        output_buffer[i] = (short)round(filtered_sample);
+    }
+}
 
 void set_volume_by_level_idx(int level_idx) {
     if (mixer_elem == NULL) {
@@ -284,6 +347,7 @@ bool load_track(int track_idx) {
 
     // Reset playback state for the new track
     playback_paused = false; 
+    initialize_fir_history(); // Reset FIR history for new track
 
     // Critical: Re-check and apply ALSA parameters if they can change per track
     // For now, we assume parameters like rate/format are compatible or re-derived
@@ -313,6 +377,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    initialize_fir_history(); // Initialize FIR history at the start
     app_log("INFO", "MusicApp starting...");
 
     // --- Argument Parsing for multiple music files ---
@@ -490,7 +555,7 @@ int main(int argc, char *argv[]) {
     if (!init_mixer()) {
         app_log("WARNING", "Failed to initialize mixer. Volume control will not be available.");
     } else {
-        app_log("INFO", "Volume control initialized. Use '+' to increase, '-' to decrease volume. 'p' to pause/resume. ',' for prev, '.' for next track. '['/']' for speed.");
+        app_log("INFO", "Volume control initialized. Use '+' to increase, '-' to decrease volume. 'p' to pause/resume. ',' for prev, '.' for next track. '['/']' for speed. '1'/'2'/'3' for EQ.");
         original_stdin_flags = fcntl(STDIN_FILENO, F_GETFL, 0);
         if (original_stdin_flags != -1) {
             if (fcntl(STDIN_FILENO, F_SETFL, original_stdin_flags | O_NONBLOCK) == -1) {
@@ -590,6 +655,18 @@ int main(int argc, char *argv[]) {
                     app_log("INFO", "Playback speed: %.1fx", PLAYBACK_SPEED_FACTORS[current_speed_idx]);
                     // No TODO needed here, logic is in the main playback section
                 }
+                else if (c_in >= '1' && c_in <= '0' + NUM_EQ_PRESETS) {
+                    int new_eq_idx = c_in - '1';
+                    if (new_eq_idx >= 0 && new_eq_idx < NUM_EQ_PRESETS && new_eq_idx != current_eq_idx) {
+                        current_eq_idx = new_eq_idx;
+                        initialize_fir_history(); // Reset history when changing EQ
+                        app_log("INFO", "Equalizer changed to: %s", EQ_PRESETS[current_eq_idx]->name);
+                    } else if (new_eq_idx == current_eq_idx) {
+                        app_log("INFO", "Equalizer already set to: %s", EQ_PRESETS[current_eq_idx]->name);
+                    } else {
+                        app_log("WARNING", "Invalid EQ preset number: %c", c_in);
+                    }
+                }
                 while(read(STDIN_FILENO, &c_in, 1) == 1 && c_in != '\n'); // Consume rest of line
             }
         }
@@ -634,66 +711,110 @@ int main(int argc, char *argv[]) {
             }
             // If read_ret was 0, the earlier check (fread returned 0) handles it.
             // If partial frame, existing logic was to break. Let's maintain that.
-            break; 
+            break;
         }
 
         unsigned char *buffer_for_alsa = NULL;
         snd_pcm_uframes_t frames_for_alsa = 0;
         bool processed_buffer_allocated = false;
+        short *resampled_audio_buffer_s16 = NULL; // For resampled audio before ALSA
+        short *eq_processed_audio_buffer_s16 = NULL; // For EQ processed audio
+        int num_samples_in_buff = read_ret / (wav_header.bits_per_sample / 8);
+
+        // Determine current samples format (e.g. S16_LE)
+        // For FIR filtering, we need signed 16-bit samples.
+        // The `buff` contains raw bytes. We need to interpret these as samples.
+        // Assuming S16_LE for now as it's common and handled by ALSA setup.
+        // If format is different, conversion will be needed here.
+
+        if (pcm_format != SND_PCM_FORMAT_S16_LE) {
+            app_log("WARNING", "FIR EQ currently assumes S16_LE input. Format is %s. EQ will be bypassed for this chunk.", snd_pcm_format_name(pcm_format));
+            // If not S16_LE, bypass EQ or implement conversion
+            // For now, bypass by setting buffer_for_alsa to buff directly later if no speed change
+        } else {
+            // EQ Processing (S16_LE)
+            eq_processed_audio_buffer_s16 = (short*)malloc(num_samples_in_buff * sizeof(short));
+            if (eq_processed_audio_buffer_s16 == NULL) {
+                app_log("ERROR", "Failed to allocate memory for EQ output buffer. EQ will be bypassed for this chunk.");
+                // Fallback: use original buff samples if EQ alloc fails
+                // This means if speed adjustment also happens, it will use original data
+            } else {
+                // Apply FIR filter
+                // Note: buff contains unsigned char. Need to cast/treat as short* for S16_LE
+                apply_fir_filter((short*)buff, eq_processed_audio_buffer_s16, num_samples_in_buff, EQ_PRESETS[current_eq_idx]);
+                // After this, eq_processed_audio_buffer_s16 contains the filtered audio data
+            }
+        }
 
         double current_speed = PLAYBACK_SPEED_FACTORS[current_speed_idx];
+        short* source_buffer_for_speed_change_s16 = (eq_processed_audio_buffer_s16 != NULL) ? eq_processed_audio_buffer_s16 : (short*)buff;
+        int num_source_samples_for_speed_change = num_samples_in_buff;
 
         if (fabs(current_speed - 1.0) < 1e-6) { // Compare double for equality with tolerance
-            buffer_for_alsa = buff;
-            frames_for_alsa = frames_read_this_iteration;
+            buffer_for_alsa = (unsigned char*)source_buffer_for_speed_change_s16;
+            frames_for_alsa = num_source_samples_for_speed_change / wav_header.num_channels; // Assuming block_align is reliable for S16_LE stereo/mono
+                                                                                         // More robust: num_source_samples (which is total samples, not per channel) / num_channels for frame count.
+                                                                                         // block_align = (bits_per_sample/8) * num_channels. So frames_read_this_iteration = read_ret / block_align
+            frames_for_alsa = frames_read_this_iteration; // This was already calculated and seems more direct
+
+            // If EQ was applied, buffer_for_alsa points to eq_processed_audio_buffer_s16.
+            // If EQ was bypassed or failed, it points to buff (cast to short* then back to unsigned char*).
+            // No new allocation is needed here unless the source was `buff` and `eq_processed_audio_buffer_s16` was used.
+            // This path is for NO speed change. If eq_processed_audio_buffer_s16 exists, it's the data to play.
+            if (eq_processed_audio_buffer_s16 != NULL) {
+                 buffer_for_alsa = (unsigned char*)eq_processed_audio_buffer_s16;
+            } else {
+                 buffer_for_alsa = buff; // Original data from file
+            }
+
         } else {
-            // Calculate target number of output frames
-            frames_for_alsa = (snd_pcm_uframes_t)round((double)frames_read_this_iteration / current_speed);
+            // Calculate target number of output frames/samples
+            // Speed adjustment operates on samples. num_source_samples_for_speed_change is total samples (L+R for stereo)
+            int target_num_output_samples = (int)round((double)num_source_samples_for_speed_change / current_speed);
+            frames_for_alsa = target_num_output_samples / wav_header.num_channels; // Convert total samples to frames
 
-            if (frames_for_alsa > 0) {
-                size_t processed_buffer_size_bytes = frames_for_alsa * wav_header.block_align;
-                buffer_for_alsa = (unsigned char *)malloc(processed_buffer_size_bytes);
+            if (target_num_output_samples > 0) {
+                size_t resampled_buffer_size_bytes = target_num_output_samples * sizeof(short); // Since we work with short samples
+                resampled_audio_buffer_s16 = (short *)malloc(resampled_buffer_size_bytes);
 
-                if (buffer_for_alsa == NULL) {
-                    app_log("ERROR", "Failed to allocate memory for speed-adjusted buffer (size %zu). Playing normal for this chunk.", processed_buffer_size_bytes);
-                    // Fallback to normal speed for this chunk
-                    buffer_for_alsa = buff;
+                if (resampled_audio_buffer_s16 == NULL) {
+                    app_log("ERROR", "Failed to allocate memory for speed-adjusted buffer (size %zu). Playing normal for this chunk.", resampled_buffer_size_bytes);
+                    buffer_for_alsa = (unsigned char*)source_buffer_for_speed_change_s16; // Fallback to source (potentially EQd)
                     frames_for_alsa = frames_read_this_iteration;
-                    // processed_buffer_allocated remains false
+                    processed_buffer_allocated = false; // Mark that the resampled_audio_buffer_s16 is not the one to free later
                 } else {
-                    processed_buffer_allocated = true;
-                    double input_frame_cursor = 0.0; // "Current position" in the input buffer, in terms of frames
-                    snd_pcm_uframes_t actual_output_frames_generated = 0;
+                    processed_buffer_allocated = true; // resampled_audio_buffer_s16 was allocated
+                    double input_sample_cursor = 0.0;
+                    int actual_output_samples_generated = 0;
                     
-                    for (snd_pcm_uframes_t out_frame_num = 0; out_frame_num < frames_for_alsa; ++out_frame_num) {
-                        int input_frame_to_sample = (int)floor(input_frame_cursor);
+                    for (int out_sample_num = 0; out_sample_num < target_num_output_samples; ++out_sample_num) {
+                        int input_sample_to_sample_idx = (int)floor(input_sample_cursor);
                         
-                        if (input_frame_to_sample >= frames_read_this_iteration) {
-                            // Consumed all available input frames from buff.
-                            // Correct the number of output frames we can actually make.
-                            frames_for_alsa = actual_output_frames_generated; 
+                        if (input_sample_to_sample_idx >= num_source_samples_for_speed_change) {
+                            target_num_output_samples = actual_output_samples_generated;
+                            frames_for_alsa = actual_output_samples_generated / wav_header.num_channels;
                             break;
                         }
                         
-                        memcpy(buffer_for_alsa + (actual_output_frames_generated * wav_header.block_align),
-                               buff + (input_frame_to_sample * wav_header.block_align),
-                               wav_header.block_align);
-                        actual_output_frames_generated++;
-                        input_frame_cursor += current_speed;
+                        resampled_audio_buffer_s16[actual_output_samples_generated] = 
+                            source_buffer_for_speed_change_s16[input_sample_to_sample_idx];
+                        actual_output_samples_generated++;
+                        input_sample_cursor += current_speed;
                     }
-                    // Ensure frames_for_alsa reflects actual frames put into buffer_for_alsa
-                    frames_for_alsa = actual_output_frames_generated;
-                    if (frames_for_alsa == 0 && processed_buffer_allocated) { // No frames generated, free buffer
-                        free(buffer_for_alsa);
-                        buffer_for_alsa = NULL; // Mark as freed
+                    frames_for_alsa = actual_output_samples_generated / wav_header.num_channels; // Update based on actual generation
+
+                    if (frames_for_alsa == 0 && processed_buffer_allocated) { 
+                        free(resampled_audio_buffer_s16);
+                        resampled_audio_buffer_s16 = NULL; 
                         processed_buffer_allocated = false;
+                        buffer_for_alsa = NULL; // No data to play
+                    } else if (processed_buffer_allocated) {
+                        buffer_for_alsa = (unsigned char*)resampled_audio_buffer_s16;
                     }
                 }
             } else {
-                // frames_for_alsa calculated to 0 (e.g., very high speed, few input frames).
-                // No audio will be played for this input block.
-                // buffer_for_alsa remains NULL or unassigned.
-                // processed_buffer_allocated remains false.
+                frames_for_alsa = 0;
+                buffer_for_alsa = NULL; // No data to play
             }
         }
 
@@ -711,7 +832,7 @@ int main(int argc, char *argv[]) {
                     } else {
                         app_log("ERROR", "ALSA snd_pcm_writei error: %s", snd_strerror(frames_written_alsa));
                         if (processed_buffer_allocated) {
-                            free(buffer_for_alsa);
+                            free(resampled_audio_buffer_s16);
                         }
                         goto playback_end; 
                     }
@@ -722,8 +843,11 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        if (processed_buffer_allocated && buffer_for_alsa != NULL) {
-            free(buffer_for_alsa);
+        if (processed_buffer_allocated && resampled_audio_buffer_s16 != NULL) {
+            free(resampled_audio_buffer_s16);
+        }
+        if (eq_processed_audio_buffer_s16 != NULL) {
+            free(eq_processed_audio_buffer_s16);
         }
         
         // This original block for breaking on partial read needs context:
@@ -735,7 +859,7 @@ int main(int argc, char *argv[]) {
         // This logic should be preserved.
         if (read_ret < buffer_size) {
             app_log("INFO", "End of music file (partial buffer read). This was the last chunk.");
-            break; 
+            break;
         }
     }
 

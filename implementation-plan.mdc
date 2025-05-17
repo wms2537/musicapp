@@ -8,7 +8,7 @@ alwaysApply: false
 ## Feature Checklist
 
 - [x] 1. 调节上一曲和下一曲 (Previous/Next Track) (15%)
-- [ ] 2. 多种倍速播放【0.5，1，1.5，2 倍速】(Playback Speed Control) (25%)
+- [x] 2. 多种倍速播放【0.5，1，1.5，2 倍速】(Playback Speed Control) (25%)
 - [x] 3. 快进快退【快进 10s，快退 10s】(Seek Forward/Backward) (20%)
 - [x] 4. 暂停继续 (Pause/Resume) (10%)
 - [x] 5. 日志输出 (Logging Output) (15%)
@@ -75,3 +75,43 @@ This document tracks the implementation of features and major changes in the Mus
 -   **Details**: Implement variable playback speed for audio files.
     -   Allow users to increase or decrease playback speed using '[' and ']' keys.
     -   Modify audio processing loop to resample audio data based on selected speed factor.
+
+## Equalizer Feature (FIR Filter)
+
+1.  **Define FIR Filter Structures and Coefficients**:
+    *   Define a structure for FIR filter parameters (coefficients, length).
+    *   Define at least three sets of FIR coefficients for different equalizer modes (e.g., Normal/Flat, Bass Boost, Treble Boost). This will likely be in `const.h`.
+    *   Status: Done
+    *   Summary: Added `FIRFilter` typedef and `MAX_FIR_TAPS` to `const.h`. Defined `FIR_NORMAL`, `FIR_BASS_BOOST`, and `FIR_TREBLE_BOOST` with placeholder coefficients.
+
+2.  **Implement FIR Filter Application Function**:
+    *   Create a function `apply_fir_filter(short *input_buffer, short *output_buffer, int num_samples, FIRFilter *filter)` that applies the FIR filter to a block of audio samples. This function will handle sample-by-sample convolution. Ensure it correctly handles buffer boundaries and filter history if needed (though simple FIR might not require extensive history between calls if buffers are processed independently).
+    *   Status: Done
+    *   Summary: Implemented `apply_fir_filter` in `MusicApp.c` with support for sample history (`fir_history`) for continuous filtering across buffers. Added `initialize_fir_history`.
+
+3.  **Integrate Equalizer into `MusicApp.c`**:
+    *   Add global variables to store the current FIR filter/equalizer mode and an array of available `FIRFilter` structures.
+    *   Modify the main audio processing loop in `MusicApp.c`:
+        *   After reading audio data into `buff` and before playback speed adjustment, convert samples to `short` if they aren't already (assuming 16-bit audio for FIR processing, which is common).
+        *   Apply the selected FIR filter using `apply_fir_filter`.
+        *   Convert processed samples back to `unsigned char *` if needed for ALSA.
+    *   Status: Done
+    *   Summary: Added `EQ_PRESETS`, `NUM_EQ_PRESETS`, and `current_eq_idx` globals. Integrated `apply_fir_filter` into the main loop, processing S16_LE audio. Handles memory for EQ buffer and passes filtered audio to speed adjustment or ALSA.
+
+4.  **Add User Controls for Equalizer**:
+    *   Assign new keyboard characters (e.g., '1', '2', '3') to switch between equalizer modes.
+    *   Update the help message and `app_log` to inform the user about the new controls.
+    *   Status: Done
+    *   Summary: Added input handling for '1', '2', '3' to change `current_eq_idx` and re-initialize FIR history. Updated `app_log` message with new controls.
+
+5.  **Testing and Refinement**:
+    *   Test with various audio files and equalizer settings.
+    *   Adjust FIR coefficients if necessary to achieve desired audio effects.
+    *   Profile if performance issues arise, though a reasonably sized FIR filter should be manageable.
+    *   Status: Pending User Action
+    *   Summary: User needs to compile, test with audio, and potentially refine FIR coefficients in `const.h` for desired sound. The current coefficients are placeholders.
+
+6.  **Update Documentation**:
+    *   Update `README.md` to explain the equalizer feature, available modes, and how to control it.
+    *   Status: Done
+    *   Summary: Updated `README.md` with details on the equalizer feature, controls (1, 2, 3), and a note about the placeholder nature of the current FIR coefficients.
