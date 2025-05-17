@@ -448,22 +448,32 @@ int main(int argc, char *argv[]) {
                 int format_code = atoi(optarg);
                 user_specified_format = true;
                 switch (format_code) {
-                    case 161: pcm_format = SND_PCM_FORMAT_S16_LE; break;
-                    case 162: pcm_format = SND_PCM_FORMAT_S16_BE; break;
-                    case 241: pcm_format = SND_PCM_FORMAT_S24_LE; break;
-                    case 242: pcm_format = SND_PCM_FORMAT_S24_BE; break;
-                    case 2431: pcm_format = SND_PCM_FORMAT_S24_3LE; break;
-                    case 2432: pcm_format = SND_PCM_FORMAT_S24_3BE; break;
-                    case 321: pcm_format = SND_PCM_FORMAT_S32_LE; break;
-                    case 322: pcm_format = SND_PCM_FORMAT_S32_BE; break;
+                    // Using ALSA defined enums directly is preferred if command line maps to them.
+                    // If format_code is a custom code, it needs to map to these enums.
+                    // For simplicity, assuming format_code might directly correspond to common patterns or a simplified set.
+                    // This section needs to map user's codes to actual snd_pcm_format_t enums.
+                    // Example: if user types '161' for S16_LE, map it to SND_PCM_FORMAT_S16_LE.
+                    // Let's assume for now the codes are just placeholders for direct enum values if they were passed differently
+                    // OR we create a mapping. The original code had magic numbers like 161.
+                    // We will now map a new set of simpler codes to the ALSA enums.
+                    // 1 -> S16_LE, 2 -> S16_BE, 3 -> S24_LE, 4 -> S24_BE, etc.
+                    case 1: pcm_format = SND_PCM_FORMAT_S16_LE; break;
+                    case 2: pcm_format = SND_PCM_FORMAT_S16_BE; break;
+                    case 3: pcm_format = SND_PCM_FORMAT_S24_LE; break;
+                    case 4: pcm_format = SND_PCM_FORMAT_S24_BE; break;
+                    case 5: pcm_format = SND_PCM_FORMAT_S24_3LE; break;
+                    case 6: pcm_format = SND_PCM_FORMAT_S24_3BE; break;
+                    case 7: pcm_format = SND_PCM_FORMAT_S32_LE; break;
+                    case 8: pcm_format = SND_PCM_FORMAT_S32_BE; break;
                     default:
-                        fprintf(stderr, "Unsupported format code: %d. Try to infer from WAV header.\n", format_code);
+                        fprintf(stderr, "Unsupported format code: %d. Format will be inferred from WAV header if possible.\n", format_code);
+                        fprintf(stderr, "Supported codes: 1 (S16_LE), 2 (S16_BE), 3 (S24_LE), 4 (S24_BE), 5 (S24_3LE), 6 (S24_3BE), 7 (S32_LE), 8 (S32_BE)\n");
                         user_specified_format = false; // Mark as not successfully set by user
-                        pcm_format = SND_PCM_FORMAT_UNKNOWN;
+                        pcm_format = SND_PCM_FORMAT_UNKNOWN; // Reset to unknown
                         break;
                 }
                 if (pcm_format != SND_PCM_FORMAT_UNKNOWN) {
-                     printf("User selected format: %s\n", snd_pcm_format_name(pcm_format));
+                     printf("User selected format code %d: %s\n", format_code, snd_pcm_format_name(pcm_format));
                 }
                 break;
             }
@@ -1397,12 +1407,11 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         // Apply Hanning window (Q15)
         for (int i = 0; i < N; ++i) {
             long long val_ll = (long long)state->current_synthesis_segment[i] * state->analysis_window_function[i];
-            // state->current_synthesis_segment[i] = (short)(val_ll >> 15); // Q15 scaling - original
-            // More robust scaling using floating point division to avoid potential issues with right-shift of negative numbers or precision:
-            double scaled_val_double = (double)val_ll / 32767.0; // analysis_window_function is scaled by 32767
-            if (scaled_val_double > 32767.0) scaled_val_double = 32767.0;
-            if (scaled_val_double < -32768.0) scaled_val_double = -32768.0;
-            state->current_synthesis_segment[i] = (short)round(scaled_val_double);
+            state->current_synthesis_segment[i] = (short)(val_ll >> 15); // Q15 scaling with bit-shift
+            // double scaled_val_double = (double)val_ll / 32767.0; // analysis_window_function is scaled by 32767
+            // if (scaled_val_double > 32767.0) scaled_val_double = 32767.0;
+            // if (scaled_val_double < -32768.0) scaled_val_double = -32768.0;
+            // state->current_synthesis_segment[i] = (short)round(scaled_val_double);
         }
 
         int samples_to_write_this_frame = H_s_eff;
@@ -1413,6 +1422,7 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         for (int i = 0; i < N_o; ++i) {
             if (output_samples_written < max_output_samples && samples_written_this_frame_ola < samples_to_write_this_frame) {
                 long long sum = (long long)state->output_overlap_add_buffer[i] + state->current_synthesis_segment[i];
+                sum >>= 1; // Divide by 2 to maintain approximate unity gain after summing two windowed signals
                 if (sum > 32767) sum = 32767;
                 if (sum < -32768) sum = -32768;
                 output_buffer[output_samples_written++] = (short)sum;

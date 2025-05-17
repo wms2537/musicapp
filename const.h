@@ -35,7 +35,7 @@ char *pcm_name;
 // 定义是播放还是回放等等，播放流 snd_pcm_open函数会用到 可以在 https://www.alsa-project.org/alsa-doc/alsa-lib/group___p_c_m.html#gac23b43ff55add78638e503b9cc892c24 查看
 snd_pcm_stream_t stream = SND_PCM_STREAM_PLAYBACK;
 // 定义采样位数
-snd_pcm_format_t pcm_format = 161;
+snd_pcm_format_t pcm_format = SND_PCM_FORMAT_UNKNOWN; // Default to unknown, let main() infer or use user-provided.
 
 
 // 缓存大小
