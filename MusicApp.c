@@ -22,7 +22,7 @@
 // --- Logging Globals and Function ---
 FILE *log_fp = NULL;
 const char *LOG_FILE_NAME = "music_app.log";
-static int debug_enabled = 1; // Runtime flag to enable/disable DEBUG logs. Set to 1 for testing.
+static int debug_enabled = 0; // Runtime flag to enable/disable DEBUG logs. Default to 0 (off).
 
 // Forward declaration for app_log if DBG is defined before app_log full definition
 void app_log(const char *type, const char *format, ...);
@@ -1776,53 +1776,15 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
 
         // Apply window function to synthesis segment
         // The window is crucial for smooth time-domain transitions
-        // Use precisely normalized float calculations to prevent distortion
         
-        // Either use existing window or create a new optimized window
-        static float *synthesis_window = NULL;
-        static int last_synthesis_window_length = 0;
-        
-        // Only create new window if needed
-        if (synthesis_window == NULL || last_synthesis_window_length != N) {
-            // Free old window if it exists
-            if (synthesis_window) free(synthesis_window);
-            
-            // Allocate new window
-            synthesis_window = (float *)malloc(N * sizeof(float));
-            if (synthesis_window) {
-                last_synthesis_window_length = N;
-                
-                // Generate optimized Hanning window
-                for (int i = 0; i < N; i++) {
-                    // Standard Hanning window formula
-                    synthesis_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (N - 1)));
-                }
-                
-                DBG("WSOLA: Generated new synthesis window, length=%d", N);
-            }
-        }
-        
-        // Apply window using floating-point for better precision
-        if (synthesis_window) {
-            for (int i = 0; i < N; ++i) {
-                // Convert to float, apply window, round back to short
-                float sample = (float)state->current_synthesis_segment[i] * synthesis_window[i];
-                
-                // Round properly to integer and clamp
-                int sample_int = (int)roundf(sample);
-                if (sample_int > 32767) sample_int = 32767;
-                if (sample_int < -32768) sample_int = -32768;
-                
-                state->current_synthesis_segment[i] = (short)sample_int;
-            }
-        } else {
-            // Fallback if window allocation failed - use Q15 window from state
-            // This is less accurate but better than nothing
-            app_log("WARNING", "WSOLA: Using Q15 window fallback due to float window allocation failure");
-            for (int i = 0; i < N; ++i) {
-                long long val_ll = (long long)state->current_synthesis_segment[i] * state->analysis_window_function[i];
-                state->current_synthesis_segment[i] = (short)(val_ll >> 15); // Q15 scaling
-            }
+        // The float-based synthesis_window and its generation are removed.
+        // We will consistently use the Q15 state->analysis_window_function.
+
+        // Apply Q15 Hanning window (state->analysis_window_function)
+        // This was previously the fallback path, now it's the main path.
+        for (int i = 0; i < N; ++i) {
+            long long val_ll = (long long)state->current_synthesis_segment[i] * state->analysis_window_function[i];
+            state->current_synthesis_segment[i] = (short)(val_ll >> 15); // Q15 scaling
         }
 
         int samples_to_write_this_frame = H_s_eff;
