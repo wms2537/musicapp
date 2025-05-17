@@ -105,7 +105,7 @@ static int fir_filter_history_idx = 0;    // Index for circular FIR history buff
 WSOLA_State *wsola_state = NULL;
 
 // --- WSOLA Function Prototypes ---
-static void generate_sine_window(float *float_window, int length);
+static void generate_hann_window(float *float_window, int length);
 static void convert_float_window_to_q15(const float* float_window, short* q15_window, int length);
 static float calculate_normalized_cross_correlation(const short *segment1, const short *segment2, int length);
 static bool get_segment_from_ring_buffer(const WSOLA_State *state, int start_index_in_ring, int length, short *output_segment);
@@ -1249,17 +1249,15 @@ static void wsola_add_input_to_ring_buffer(WSOLA_State *state, const short *inpu
     }
 }
 
-// Generates a Hanning window of a given length.
-// Output `window` values are typically floats [0,1], here we might store Q15 shorts if direct scaling desired
-// For now, this function will be a placeholder as we need to decide on float vs fixed-point for window.
-// Let's assume it populates a float array first, then it's converted to short if needed.
-// For simplicity here, we'll compute float values and assume they'll be scaled appropriately when used.
-static void generate_sine_window(float *float_window, int length) {
+// Generates a Hann window: 0.5 * (1 - cos(2*pi*i / (L-1)))
+static void generate_hann_window(float *float_window, int length) {
     if (length <= 0) return;
+    if (length == 1) { // Avoid division by zero for N-1 if N=1
+        float_window[0] = 1.0f; // Or 0.0f, depending on desired behavior for single point window
+        return;
+    }
     for (int i = 0; i < length; i++) {
-        // Sine window: sin(pi * i / (L-1)) for i = 0 to L-1
-        // This provides sqrt-Hanning properties for 50% OLA
-        float_window[i] = sinf(M_PI * (float)i / (float)(length - 1));
+        float_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * (float)i / (float)(length - 1)));
     }
 }
 
@@ -1713,13 +1711,13 @@ bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_a
         app_log("ERROR", "wsola_init: Failed to allocate memory for analysis_window_function.");
         wsola_destroy(&s); return false;
     }
-    // Generate Sine window (float first, then convert to Q15 short)
+    // Generate Hann window (float first, then convert to Q15 short)
     float *temp_float_window = (float *)malloc(s->analysis_frame_samples * sizeof(float));
     if (!temp_float_window) {
         app_log("ERROR", "wsola_init: Failed to allocate memory for temp_float_window.");
         wsola_destroy(&s); return false;
     }
-    generate_sine_window(temp_float_window, s->analysis_frame_samples);
+    generate_hann_window(temp_float_window, s->analysis_frame_samples);
     convert_float_window_to_q15(temp_float_window, s->analysis_window_function, s->analysis_frame_samples);
     free(temp_float_window);
 
