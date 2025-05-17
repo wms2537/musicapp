@@ -134,7 +134,7 @@ alwaysApply: false
           *   Status: Done
           *   Summary: WSOLA path is activated only for S16_LE mono. Input to WSOLA is cast to `short*`.
       *   Status: Done
-      *   Summary: WSOLA processing has been integrated into the main application loop, replacing the previous speed control logic for compatible audio formats (S16_LE mono). Fallback to simple resampling exists for other formats or if WSOLA fails.
+          *Summary: WSOLA processing has been integrated into the main application loop, replacing the previous speed control logic for compatible audio formats (S16_LE mono). Fallback to simple resampling exists for other formats or if WSOLA fails.
 
   5.  **Testing and Quality Tuning**:
       *   Test with various audio files (music, speech) and all speed factors (0.5x, 1.5x, 2.0x).
@@ -161,7 +161,9 @@ alwaysApply: false
           *Done*
           *Summary: Enabled a debug log within `find_best_match_segment` in `MusicApp.c` and corrected its format specifier. The previous logs (`music_app-4.log`) did not show output from this function, which is crucial for understanding segment selection and potential causes of distortion. This change will provide visibility into the chosen offsets and correlation values. User provided new logs (`music_app-5.log`) showing initial frames had `Max Corr = 0` and `Best offset = -132` (edge of search window).
           *Done*
-          *Summary: Modified `wsola_process` in `MusicApp.c` to address the issue where initial frames (when `output_overlap_add_buffer` is silent) were consistently yielding zero correlation and selecting a segment at the edge of the search window (-S_w). The fix forces `best_offset_from_ideal_center` to `0` if `correlation == 0` and `state->total_output_samples_generated < N` (i.e., during the very first few output frames). Also ensured `state->total_output_samples_generated` is correctly updated at the end of the function. This aims to prevent distortion caused by arbitrary segment selection at the beginning of audio processing.
+          *Summary: Modified `wsola_process` in `MusicApp.c` to address the issue where initial frames (when `output_overlap_add_buffer` is silent) were consistently yielding zero correlation and selecting a segment at the edge of the search window (-S_w). The fix forces `best_offset_from_ideal_center` to `0` if `correlation == 0` and `state->total_output_samples_generated < N` (i.e., during the very first few output frames). Also ensured `state->total_output_samples_generated` is correctly updated at the end of the function. This aims to prevent distortion caused by arbitrary segment selection at the beginning of audio processing. User logs (`music_app-6.log`) showed this fix was applied for *all* internal iterations of the first `wsola_process` call due to `total_output_samples_generated` only being updated at the end, effectively disabling WSOLA for the first large audio chunk.
+          *Done*
+          *Summary: Corrected the logic in `wsola_process` for handling zero correlation during initial frames. Instead of checking `state->total_output_samples_generated < N`, the condition now uses `loop_iterations <= 1`. This ensures that the offset is forced to 0 only for the very first iteration of the internal processing loop within a `wsola_process` call, when the `output_overlap_add_buffer` is guaranteed to be in its initial (likely silent) state. This prevents the previous issue where the offset was forced to 0 for too many frames, and allows `find_best_match_segment` to operate correctly for subsequent frames within the same `wsola_process` call.
 
   6.  **Update Documentation (README.md)**:
       *   Reflect that playback speed control now preserves pitch.

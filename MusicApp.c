@@ -1371,11 +1371,12 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         if (correlation == -LLONG_MAX) {
             app_log("WARNING", "WSOLA: find_best_match_segment returned error/no match. Using zero offset. Correlation: %lld", correlation);
             best_offset_from_ideal_center = 0; // Ensure fallback to zero offset
-        } else if (correlation == 0 && state->total_output_samples_generated < (unsigned long long)N) {
-            // If correlation is zero AND we are in the very initial frames (output overlap buffer was likely silent),
-            // it's better to stick to the ideal segment (offset 0) rather than an arbitrary edge of the search window.
-            app_log("DEBUG", "WSOLA: Correlation is 0 during initial frames (total_out_gen: %llu < N: %d). Forcing offset to 0 from %d.",
-                    state->total_output_samples_generated, N, best_offset_from_ideal_center);
+        } else if (correlation == 0 && loop_iterations <= 1) { // Check loop_iterations instead of total_output_samples_generated
+            // If correlation is zero AND we are in the very first iteration of this wsola_process call
+            // (output overlap buffer was definitely silent from init or previous call's end),
+            // it's better to stick to the ideal segment (offset 0).
+            app_log("DEBUG", "WSOLA: Correlation is 0 during initial loop iter (iter: %d). Forcing offset to 0 from %d.",
+                    loop_iterations, best_offset_from_ideal_center);
             best_offset_from_ideal_center = 0;
         }
 
