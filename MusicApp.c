@@ -1466,7 +1466,7 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         for (int i = 0; i < N_o; ++i) {
             if (output_samples_written < max_output_samples && samples_written_this_frame_ola < samples_to_write_this_frame) {
                 long long sum = (long long)state->output_overlap_add_buffer[i] + state->current_synthesis_segment[i];
-                sum >>= 1; // Divide by 2 to maintain approximate unity gain after summing two windowed signals
+                // sum >>= 1; // Divide by 2 to maintain approximate unity gain after summing two windowed signals -- REMOVED FOR TESTING
                 if (sum > 32767) sum = 32767;
                 if (sum < -32768) sum = -32768;
                 output_buffer[output_samples_written++] = (short)sum;

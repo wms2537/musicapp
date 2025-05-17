@@ -180,6 +180,8 @@ alwaysApply: false
           *Summary: Re-enabled FIR filter processing by removing the temporary bypass in `apply_fir_filter`. This is to test if the FIR filter (with its O(1) circular history update) works correctly at normal (1.0x) speed. If 1.0x speed remains clean, it further isolates the distortion to WSOLA when time-scaling. User confirmed 1.0x speed with FIR re-enabled is working correctly. Distortion persists for non-1.0x speeds.
           *Done*
           *Summary: The problem is now isolated to `wsola_process` when time-scaling (speed != 1.0x). The FIR filter and 1.0x speed playback are clean. Requesting logs for 0.5x and 2.0x speed to examine NCC values and best_offset from `find_best_match_segment` to diagnose the distortion during active WSOLA processing.
+          *Done*
+          *Summary: To differentiate between issues in WSOLA's search (`find_best_match_segment`) and its core OLA/resampling, `find_best_match_segment` was temporarily modified to always return offset 0 and perfect correlation (effectively SOLA). User reported distortion persists even with this simplification. Next step is to confirm if ALSA underruns also persisted and to analyze detailed logs from `wsola_process` running in this SOLA mode to trace data flow and calculations.
 
   6.  **Update Documentation (README.md)**:
       *   Reflect that playback speed control now preserves pitch.
