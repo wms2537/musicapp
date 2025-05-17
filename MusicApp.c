@@ -1204,16 +1204,12 @@ static float calculate_normalized_cross_correlation(const short *segment1, const
         return 0.9999f;
     }
 
-    // Create a triangular window emphasizing the center
-    // Unlike Hanning, this gives maximum weight to the center and less to the edges
-    // which is more appropriate for correlation matching
+    // The internal triangular windowing has been removed.
+    // Correlation is now performed on the (potentially pre-windowed by caller) mean-centered segments.
     for (int i = 0; i < length; ++i) {
-        // Create triangular window weight (peak in center)
-        double window_weight = 1.0 - fabs(2.0 * (double)i / length - 1.0);
-        
-        // Apply window to mean-centered samples
-        double s1 = (segment1[i] - mean1) * window_weight;
-        double s2 = (segment2[i] - mean2) * window_weight;
+        // Samples are mean-centered
+        double s1 = (segment1[i] - mean1);
+        double s2 = (segment2[i] - mean2);
         
         // Calculate correlation components
         sum_s1s2 += s1 * s2;
