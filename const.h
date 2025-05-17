@@ -186,3 +186,12 @@ typedef struct {
 #define SND_PCM_FORMAT_S24_LE 3 // Common ALSA value, verify if used
 #endif
 
+// Define MAX and MIN macros for use in algorithm
+#ifndef MAX
+#define MAX(a,b) ((a) > (b) ? (a) : (b))
+#endif
+
+#ifndef MIN
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
+#endif
+
