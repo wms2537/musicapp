@@ -1711,13 +1711,13 @@ bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_a
         app_log("ERROR", "wsola_init: Failed to allocate memory for analysis_window_function.");
         wsola_destroy(&s); return false;
     }
-    // Generate Hann window (float first, then convert to Q15 short)
+    // Generate Sine (sqrt-Hanning) window for analysis/synthesis frames
     float *temp_float_window = (float *)malloc(s->analysis_frame_samples * sizeof(float));
     if (!temp_float_window) {
         app_log("ERROR", "wsola_init: Failed to allocate memory for temp_float_window.");
         wsola_destroy(&s); return false;
     }
-    generate_hann_window(temp_float_window, s->analysis_frame_samples);
+    generate_sine_window(temp_float_window, s->analysis_frame_samples);
     convert_float_window_to_q15(temp_float_window, s->analysis_window_function, s->analysis_frame_samples);
     free(temp_float_window);
 
@@ -1804,16 +1804,13 @@ void wsola_destroy(WSOLA_State **state_ptr) {
 int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_samples, 
                   short *output_buffer, int max_output_samples) {
     if (!state || !output_buffer || max_output_samples <= 0) {
-        return 0; // No state or no place to put output
+        return 0; 
     }
 
-    // STATIC FADE WINDOWS REMOVED - NO LONGER USED
-    // static float *synthesis_window = NULL; // This was for a different windowing approach, also removed earlier
-    // static int last_synthesis_window_length = 0;
-
-    // static float *fade_out = NULL; // REMOVE
-    // static float *fade_in = NULL;  // REMOVE
-    // static int last_fade_length = 0; // REMOVE
+    // Re-introduce static fade_in/fade_out buffers for sqrt-Hanning crossfade
+    static float *fade_out = NULL;
+    static float *fade_in = NULL;
+    static int last_fade_length = 0;
 
     if (input_samples && num_input_samples > 0) {
         wsola_add_input_to_ring_buffer(state, input_samples, num_input_samples);
@@ -1893,33 +1890,60 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         }
 
         // OLA produces N_o samples in this iteration.
-        // int samples_to_write_this_frame = H_s_eff; // REMOVED H_s_eff
         int samples_written_this_frame_ola = 0;
-        // int samples_written_this_frame_new = 0; // REMOVED, no separate "new" part write
 
-        // --- Overlap-Add with 50% Sine Window --- 
-        for (int i = 0; i < N_o; ++i) { // N_o is N/2. This loop now produces N_o samples.
-            // Optional guard suggested by user: if (max_output_samples - output_samples_written < N_o) break;
-            // This is covered by the main while loop condition: output_samples_written + N_o <= max_output_samples
+        // --- Generate Sqrt-Hanning cross-fade windows if needed --- 
+        if (fade_in == NULL || fade_out == NULL || last_fade_length != N_o) {
+            if(fade_in) free(fade_in);
+            if(fade_out) free(fade_out);
 
-            long long sum = (long long)state->output_overlap_add_buffer[i] + state->current_synthesis_segment[i];
+            fade_in  = (float*)malloc(N_o * sizeof(float));
+            fade_out = (float*)malloc(N_o * sizeof(float));
             
-            if (sum > 32767) sum = 32767;
-            else if (sum < -32768) sum = -32768;
-            
-            output_buffer[output_samples_written++] = (short)sum;
-            samples_written_this_frame_ola++; 
-            // No break needed here for samples_written_this_frame_ola < N_o, loop runs N_o times if output has space.
+            if (!fade_in || !fade_out) {
+                app_log("ERROR", "WSOLA: Failed to allocate memory for fade windows.");
+                // Potentially free the one that succeeded and return 0 or handle error
+                if(fade_in) { free(fade_in); fade_in = NULL; }
+                if(fade_out) { free(fade_out); fade_out = NULL; }
+                // Not returning here, will attempt OLA without fade if it falls through, but that's bad.
+                // For safety, let's ensure the OLA loop won't use them if NULL.
+            } else {
+                last_fade_length = N_o;
+                for(int i=0; i<N_o; i++) {
+                    float t = (N_o == 1) ? 0.0f : (float)i / (float)(N_o - 1); // Normalized 0 to 1
+                    fade_in[i]  = sinf( (M_PI / 2.0f) * t );    /*  sqrt-Hann for fade-in */
+                    fade_out[i] = cosf( (M_PI / 2.0f) * t );    /*  sqrt-Hann for fade-out */
+                }
+                DBG("WSOLA: Generated new sqrt-Hanning crossfade windows, length=%d", N_o);
+            }
         }
 
-        // --- The "new" part (second half of current windowed segment) is NOT explicitly written here. ---
-        // It will be handled by the OLA of the *next* iteration when the current second half
-        // (stored in output_overlap_add_buffer) is summed with the next segment's first half.
-        /* Entire block removed:
-        int needed_new_output_samples = samples_to_write_this_frame - samples_written_this_frame_ola;
-        if (needed_new_output_samples > 0) { ... }
-        */
-        
+        // --- Overlap-Add with Sqrt-Hanning Crossfade --- 
+        if (fade_in && fade_out) { // Ensure windows were allocated
+            for (int i = 0; i < N_o; ++i) { 
+                float s_ola = (float)state->output_overlap_add_buffer[i] * fade_out[i] +
+                              (float)state->current_synthesis_segment[i]  * fade_in[i];
+
+                int si_ola = (int)roundf(s_ola);
+                if (si_ola > 32767)  si_ola = 32767;
+                else if (si_ola < -32768) si_ola =-32768;
+
+                output_buffer[output_samples_written++] = (short)si_ola;
+                samples_written_this_frame_ola++; 
+            }
+        } else {
+            // Fallback: If fade windows failed to allocate, do a simple (but incorrect for sine) direct add.
+            // This will sound bad but prevents a crash. A proper error path might be better.
+            app_log("WARNING", "WSOLA: Fade windows not available. Using direct sum for OLA (will cause artifacts).");
+            for (int i = 0; i < N_o; ++i) { 
+                long long sum = (long long)state->output_overlap_add_buffer[i] + state->current_synthesis_segment[i];
+                if (sum > 32767) sum = 32767;
+                else if (sum < -32768) sum = -32768;
+                output_buffer[output_samples_written++] = (short)sum;
+                samples_written_this_frame_ola++; 
+            }
+        }
+
         // Update the output_overlap_add_buffer with the tail (second half) of the current *windowed* synthesis segment
         if (N_o > 0) { 
              memcpy(state->output_overlap_add_buffer, state->current_synthesis_segment + N_o, N_o * sizeof(short));
@@ -2016,4 +2040,20 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
     // state->total_input_samples_processed = state->next_ideal_input_frame_start_sample_offset; // This is an approximation
 
     return output_samples_written;
+}
+
+// ... existing code ...
+// Renamed back to generate_sine_window (implements sqrt-Hanning for analysis/synthesis frame)
+// Generates a Sine window: sin(pi*i / (L-1))
+static void generate_sine_window(float *float_window, int length) {
+    if (length <= 0) return;
+    if (length == 1) { 
+        float_window[0] = 0.0f; // sin(0) = 0. A single point sine window is 0.
+                               // Or 1.0f if we want it to pass signal for L=1. But L=1 is an edge case.
+                               // For WSOLA, N is usually >> 1. Let's stick to sin(0)=0 for consistency.
+        return;
+    }
+    for (int i = 0; i < length; i++) {
+        float_window[i] = sinf(M_PI * (float)i / (float)(length - 1));
+    }
 }
