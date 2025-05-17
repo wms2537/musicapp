@@ -140,8 +140,8 @@ alwaysApply: false
       *   Test with various audio files (music, speech) and all speed factors (0.5x, 1.5x, 2.0x).
       *   Tune WSOLA parameters (frame sizes, overlap, search window) to minimize artifacts (e.g., phasing, choppiness) and achieve the best possible audio quality.
       *   Profile CPU usage to ensure real-time performance is feasible.
-      *   Status: Pending
-      *   Summary:
+      *   Status: In Progress
+      *   Summary: Detailed logs from `wsola_process` show the algorithm is iterating correctly. ALSA underruns persisted even after reducing `DEFAULT_SEARCH_WINDOW_MS` to 5ms. To further optimize, `calculate_normalized_cross_correlation` was changed to `calculate_cross_correlation_numerator`, which uses `long long` integer arithmetic for the sum of products, removing floating-point operations and the square root for normalization. `find_best_match_segment` was updated accordingly to use and return `long long` correlation values. This aims to significantly reduce computational cost.
 
   6.  **Update Documentation (README.md)**:
       *   Reflect that playback speed control now preserves pitch.

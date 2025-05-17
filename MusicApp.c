@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdbool.h>
+#include <limits.h> // Added for LLONG_MAX
 #include <alsa/asoundlib.h>
 #include <fcntl.h> // For non-blocking stdin
 #include <errno.h> // For snd_strerror(errno)
@@ -86,8 +87,10 @@ WSOLA_State *wsola_state = NULL;
 
 // --- WSOLA Function Prototypes ---
 static void generate_hanning_window(float *float_window, int length);
-static float calculate_normalized_cross_correlation(const short *segment1, const short *segment2, int length);
-static float find_best_match_segment(
+static void convert_float_window_to_q15(const float* float_window, short* q15_window, int length);
+static long long calculate_cross_correlation_numerator(const short *segment1, const short *segment2, int length);
+static bool get_segment_from_ring_buffer(const WSOLA_State *state, int start_index_in_ring, int length, short *output_segment);
+static long long find_best_match_segment(
     const WSOLA_State *state, 
     const short *target_segment_for_comparison, 
     int ideal_search_center_ring_idx, 
@@ -1018,128 +1021,120 @@ static void convert_float_window_to_q15(const float* float_window, short* q15_wi
     }
 }
 
-// Calculates a simplified cross-correlation normalized by signal energies.
-// Returns a value ideally between -1 and 1 (though precision with shorts might affect exact range).
-// Higher absolute value means more similarity (or inverse similarity).
-static float calculate_normalized_cross_correlation(const short *segment1, const short *segment2, int length) {
-    if (length <= 0 || !segment1 || !segment2) {
-        return 0.0f;
+// Helper function to calculate normalized cross-correlation between two segments.
+// Segments are arrays of 16-bit signed PCM samples.
+static long long calculate_cross_correlation_numerator(const short *segment1, const short *segment2, int length) {
+    if (segment1 == NULL || segment2 == NULL || length <= 0) {
+        app_log("ERROR", "NCC: Invalid arguments (NULL segments or zero/negative length: %d)", length);
+        return 0; // Or handle error appropriately, returning 0 for correlation might be problematic
     }
 
-    double sum_s1_s2 = 0.0;
-    double sum_s1_sq = 0.0;
-    double sum_s2_sq = 0.0;
+    // Use long long for sums to prevent overflow, as product of two shorts can exceed int range,
+    // and sum of many such products can exceed long range if length is large.
+    long long sum_s1s2 = 0;
+    // No longer calculating sum_s1_sq and sum_s2_sq for the simplified version
+    // double sum_s1_sq = 0.0;
+    // double sum_s2_sq = 0.0;
 
-    for (int i = 0; i < length; i++) {
-        double s1_val = (double)segment1[i];
-        double s2_val = (double)segment2[i];
-
-        sum_s1_s2 += s1_val * s2_val;
-        sum_s1_sq += s1_val * s1_val;
-        sum_s2_sq += s2_val * s2_val;
+    for (int i = 0; i < length; ++i) {
+        short s1 = segment1[i];
+        short s2 = segment2[i];
+        sum_s1s2 += (long long)s1 * s2;
+        // sum_s1_sq += (double)s1 * s1;
+        // sum_s2_sq += (double)s2 * s2;
     }
 
-    if (sum_s1_sq == 0.0 || sum_s2_sq == 0.0) {
-        // If either segment is all zeros, correlation is undefined or zero.
-        // If they are both all zeros, they are perfectly correlated, but sqrt(0*0) is an issue.
-        // Let's return 1.0 if both are zero energy (identical silence), 0 otherwise.
-        return (sum_s1_sq == 0.0 && sum_s2_sq == 0.0) ? 1.0f : 0.0f;
-    }
+    // Denominator calculation for normalization (removed for simplicity)
+    // double denominator = sqrt(sum_s1_sq * sum_s2_sq);
+    // if (denominator == 0) {
+    //     // This can happen if one or both segments are all zeros.
+    //     // app_log("DEBUG", "NCC: Denominator is zero. s1_sq=%.2f, s2_sq=%.2f", sum_s1_sq, sum_s2_sq);
+    //     return 0.0; // Or handle as perfectly uncorrelated or perfectly correlated if both zero.
+    //                 // Returning 0.0 implies no correlation.
+    // }
+    // return (float)(sum_s1s2 / denominator);
 
-    double denominator = sqrt(sum_s1_sq * sum_s2_sq);
-    if (denominator == 0.0) { // Should be caught by above, but as a safeguard
-        return 0.0f;
-    }
-
-    return (float)(sum_s1_s2 / denominator);
+    return sum_s1s2; // Return the numerator of the cross-correlation
 }
 
-// Helper function to extract a segment from the input ring buffer, handling wrap-around.
-// Copies `length` samples starting from `start_index` in `state->input_buffer_ring` into `output_segment`.
-// Assumes `output_segment` is pre-allocated with at least `length` capacity.
-// Returns false if requested segment is not fully available in the ring buffer.
-static bool get_segment_from_ring_buffer(const WSOLA_State *state, int start_index_in_ring, int length, short *output_segment) {
-    if (!state || !state->input_buffer_ring || !output_segment || length <= 0) return false;
-    if (length > state->input_buffer_content) { // Not enough data in the entire buffer
-        app_log("DEBUG", "get_segment: not enough content (%d) for length %d", state->input_buffer_content, length);
-        return false;
-    }
-
-    for (int i = 0; i < length; i++) {
-        int current_ring_idx = (start_index_in_ring + i) % state->input_buffer_capacity;
-        output_segment[i] = state->input_buffer_ring[current_ring_idx];
-    }
-    return true;
-}
-
-// Finds the segment in the input ring buffer (within a search window) that best matches 
-// the provided target_segment (typically the tail of the last synthesized frame).
-// The search is centered around an ideal_start_offset_in_ring.
-// state: WSOLA state containing ring buffer, search_window_samples, overlap_samples.
-// target_segment_for_comparison: The segment to match against (e.g., state->output_overlap_add_buffer).
-// ideal_search_center_ring_idx: The index in the ring buffer that is the center of our search range.
-// best_segment_start_offset_from_ideal_center_ptr: Output, the offset from ideal_search_center_ring_idx of the best match found.
-//                                                    A value of 0 means the ideal center itself was best or part of best segment.
-// Returns: The highest correlation value found. If no valid segment found, returns a very low value (e.g. -2.0f).
-static float find_best_match_segment(
-    const WSOLA_State *state, 
-    const short *target_segment_for_comparison, 
-    int ideal_search_center_ring_idx, 
-    int *best_segment_start_offset_from_ideal_center_ptr
-) {
+// Helper function to safely get a segment of 'length' samples starting from
+// 'start_index_in_ring' in the ring buffer.
+// Returns true if successful, false if the segment cannot be fully extracted (e.g., not enough data).
+static long long find_best_match_segment(
+    const WSOLA_State *state,
+    const short *target_segment_for_comparison, // This is typically state->output_overlap_add_buffer
+    int ideal_search_center_ring_idx,           // Ideal start of search in input_buffer_ring
+    int *best_segment_start_offset_from_ideal_center_ptr) 
+{
     if (!state || !target_segment_for_comparison || !best_segment_start_offset_from_ideal_center_ptr) {
-        return -2.0f; // Indicate error
+        app_log("ERROR", "find_best_match: NULL pointer argument.");
+        if (best_segment_start_offset_from_ideal_center_ptr) *best_segment_start_offset_from_ideal_center_ptr = 0;
+        return -1e18; // Indicate error or no match found, return a very small number for long long
     }
 
     int N_o = state->overlap_samples;
     int S_w = state->search_window_samples;
+    // If S_w is 0 or negative, this means no search beyond the ideal center.
+    // This can be a valid configuration for minimal processing or testing.
 
-    if (N_o <= 0) return -2.0f; // Nothing to compare
-
-    *best_segment_start_offset_from_ideal_center_ptr = 0;
-    float max_correlation = -2.0f; // Initialize with a value lower than any possible correlation
-
+    // Allocate a temporary buffer for candidate segments from the ring buffer
     short *candidate_segment = (short *)malloc(N_o * sizeof(short));
     if (!candidate_segment) {
-        app_log("ERROR", "find_best_match: Failed to allocate temp candidate_segment buffer");
-        return -2.0f; 
+        app_log("ERROR", "find_best_match: Failed to allocate memory for candidate_segment.");
+        *best_segment_start_offset_from_ideal_center_ptr = 0;
+        return -1e18; // Error
     }
 
-    if (S_w == 0) {
+    // Initialize with a very low correlation value (since we want to maximize)
+    // For float, -FLT_MAX is suitable. For long long, a very negative number.
+    long long max_correlation = -LLONG_MAX; // Use LLONG_MAX from <limits.h> (implicitly included by others)
+    *best_segment_start_offset_from_ideal_center_ptr = 0; // Default to no offset (ideal center)
+    bool match_found = false;
+
+    if (S_w <= 0) { // No search window, or invalid search window
         // No search window, just check the ideal_search_center_ring_idx
         if (get_segment_from_ring_buffer(state, ideal_search_center_ring_idx, N_o, candidate_segment)) {
-            max_correlation = calculate_normalized_cross_correlation(target_segment_for_comparison, candidate_segment, N_o);
+            max_correlation = calculate_cross_correlation_numerator(target_segment_for_comparison, candidate_segment, N_o);
             *best_segment_start_offset_from_ideal_center_ptr = 0; // Offset is 0 by definition
+            match_found = true;
         } else {
-            max_correlation = -2.0f; // Segment not available
-            *best_segment_start_offset_from_ideal_center_ptr = 0;
+            // This case should ideally be prevented by checks in wsola_process before calling find_best_match
+            app_log("WARNING", "find_best_match: (No search window) Could not get segment at ideal_search_center_ring_idx %d", ideal_search_center_ring_idx);
+            // max_correlation remains -LLONG_MAX, *best_segment_start_offset_from_ideal_center_ptr remains 0
         }
     } else {
-        // The search range is [ideal_search_center_ring_idx - S_w, ideal_search_center_ring_idx + S_w]
+        // Search from -S_w to +S_w around the ideal_search_center_ring_idx
         for (int offset = -S_w; offset <= S_w; ++offset) {
-            int candidate_start_ring_idx = (ideal_search_center_ring_idx + offset + state->input_buffer_capacity) % state->input_buffer_capacity;
-
-            if (!get_segment_from_ring_buffer(state, candidate_start_ring_idx, N_o, candidate_segment)) {
-                continue; 
+            int current_candidate_start_ring_idx = (ideal_search_center_ring_idx + offset + state->input_buffer_capacity) % state->input_buffer_capacity;
+            
+            if (!get_segment_from_ring_buffer(state, current_candidate_start_ring_idx, N_o, candidate_segment)) {
+                // This might happen if the search window goes into an area of the ring buffer that doesn't have valid data yet
+                // Or if an earlier part of the ring buffer has already been overwritten.
+                // app_log("DEBUG", "find_best_match: Could not get candidate segment at offset %d (ring_idx %d). Skipping.", offset, current_candidate_start_ring_idx);
+                continue; // Skip this candidate
             }
 
-            float current_correlation = calculate_normalized_cross_correlation(target_segment_for_comparison, candidate_segment, N_o);
+            long long current_correlation = calculate_cross_correlation_numerator(target_segment_for_comparison, candidate_segment, N_o);
 
             if (current_correlation > max_correlation) {
                 max_correlation = current_correlation;
                 *best_segment_start_offset_from_ideal_center_ptr = offset;
+                match_found = true;
             }
-        }
-        // If no correlation was found (e.g. all segments were unavailable in a search window)
-        if (max_correlation == -2.0f) { 
-            app_log("DEBUG", "find_best_match: No valid correlation found in search window. Defaulting to offset 0.");
-            *best_segment_start_offset_from_ideal_center_ptr = 0;
-            // Optionally, could try to get the segment at offset 0 if all others failed, but current loop structure implies it was tried if S_w > 0.
-            // If an error occurred or no segment was available, max_correlation remains -2.0f
         }
     }
 
     free(candidate_segment);
+
+    if (!match_found) {
+        // This could happen if S_w > 0 but get_segment_from_ring_buffer failed for all offsets,
+        // or if S_w <=0 and the initial get_segment also failed.
+        // This indicates a potential issue with data availability or search window logic.
+        app_log("WARNING", "find_best_match: No valid segment found in search window. Ideal center idx: %d, S_w: %d", ideal_search_center_ring_idx, S_w);
+        // Return the very small number, best_offset already 0
+    }
+    
+    // app_log("DEBUG", "find_best_match: Best offset = %d, Max Corr = %.4f", *best_segment_start_offset_from_ideal_center_ptr, max_correlation);
     return max_correlation;
 }
 
