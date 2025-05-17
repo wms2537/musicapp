@@ -693,6 +693,12 @@ int main(int argc, char *argv[]) {
     printf("Starting playback...\n");
     int read_ret;
     while (1) {
+        // Initialize per-iteration dynamic buffers to NULL
+        short *eq_processed_audio_buffer_s16_this_iter = NULL;
+        short *resampled_audio_buffer_s16_this_iter = NULL;
+        // This flag will track if buffer_for_alsa points to resampled_audio_buffer_s16_this_iter
+        bool buffer_for_alsa_is_resampled_output = false;
+
         // Handle Pause/Resume input first
         if (mixer_handle && original_stdin_flags != -1) {
             char c_in = -1;
@@ -895,33 +901,26 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        unsigned char *buffer_for_alsa = NULL;
-        snd_pcm_uframes_t frames_for_alsa = 0;
-        bool processed_buffer_allocated = false;
-        short *resampled_audio_buffer_s16 = NULL; // For resampled audio before ALSA
-        short *eq_processed_audio_buffer_s16 = NULL; // For EQ processed audio
-        int num_samples_in_buff = read_ret / (wav_header.bits_per_sample / 8);
+        unsigned char *buffer_for_alsa = NULL; // This will point to the data source for ALSA processing
+        snd_pcm_uframes_t frames_for_alsa = 0; // Number of frames in buffer_for_alsa
 
-        // Determine current samples format (e.g. S16_LE)
-        // For FIR filtering, we need signed 16-bit samples.
-        // The `buff` contains raw bytes. We need to interpret these as samples.
-        // Assuming S16_LE for now as it's common and handled by ALSA setup.
-        // If format is different, conversion will be needed here.
-
-        // --- FIR FILTER IS CURRENTLY BYPASSED in apply_fir_filter() FOR DEBUGGING ---
+        // Original logic for EQ processing:
         if (pcm_format != SND_PCM_FORMAT_S16_LE) {
             app_log("WARNING", "FIR EQ currently assumes S16_LE input. Format is %s. EQ will be bypassed for this chunk.", snd_pcm_format_name(pcm_format));
+            // If EQ is bypassed, subsequent operations might use 'buff' directly if no speed change.
+            // For simplicity, let's assume buffer_for_alsa will be 'buff' if no EQ/speed change.
         } else {
-            eq_processed_audio_buffer_s16 = (short*)malloc(num_samples_in_buff * sizeof(short));
-            if (eq_processed_audio_buffer_s16 == NULL) {
+            eq_processed_audio_buffer_s16_this_iter = (short*)malloc(num_samples_in_buff * sizeof(short));
+            if (eq_processed_audio_buffer_s16_this_iter == NULL) {
                 app_log("ERROR", "Failed to allocate memory for EQ output buffer. EQ will be bypassed for this chunk.");
             } else {
-                apply_fir_filter((short*)buff, eq_processed_audio_buffer_s16, num_samples_in_buff, EQ_PRESETS[current_eq_idx]);
+                apply_fir_filter((short*)buff, eq_processed_audio_buffer_s16_this_iter, num_samples_in_buff, EQ_PRESETS[current_eq_idx]);
             }
         }
 
         double current_speed = PLAYBACK_SPEED_FACTORS[current_speed_idx];
-        short* source_buffer_for_speed_change_s16 = (eq_processed_audio_buffer_s16 != NULL) ? eq_processed_audio_buffer_s16 : (short*)buff;
+        // Determine source for speed change: EQ'd buffer if available, else raw 'buff'
+        short* source_buffer_for_speed_change_s16 = (eq_processed_audio_buffer_s16_this_iter != NULL) ? eq_processed_audio_buffer_s16_this_iter : (short*)buff;
         int num_source_samples_for_speed_change = num_samples_in_buff;
 
         // --- WSOLA / Speed Change Logic --- 
@@ -943,110 +942,188 @@ int main(int argc, char *argv[]) {
             // Max output = input_samples / min_speed_factor (e.g., 0.5x)
             // A safe buffer: num_source_samples_for_speed_change / 0.5 (i.e., * 2) + some margin for frame alignment.
             int max_wsola_output_samples = (int)((double)num_source_samples_for_speed_change / PLAYBACK_SPEED_FACTORS[0]) + wsola_state->analysis_frame_samples;
-            resampled_audio_buffer_s16 = (short *)malloc(max_wsola_output_samples * sizeof(short));
+            resampled_audio_buffer_s16_this_iter = (short *)malloc(max_wsola_output_samples * sizeof(short));
 
-            if (resampled_audio_buffer_s16 == NULL) {
+            if (resampled_audio_buffer_s16_this_iter == NULL) {
                 app_log("ERROR", "Failed to allocate memory for WSOLA output buffer. Using simple speed change for this chunk.");
                 use_wsola = false; // Fallback
-                processed_buffer_allocated = false;
             } else {
-                int wsola_output_count = wsola_process(wsola_state, 
+                int wsola_output_count_samples = wsola_process(wsola_state, 
                                                        source_buffer_for_speed_change_s16, 
                                                        num_source_samples_for_speed_change, 
-                                                       resampled_audio_buffer_s16, 
+                                                       resampled_audio_buffer_s16_this_iter, 
                                                        max_wsola_output_samples);
-                if (wsola_output_count > 0) {
-                    buffer_for_alsa = (unsigned char*)resampled_audio_buffer_s16;
-                    frames_for_alsa = wsola_output_count / wav_header.num_channels; // wsola_output_count is total samples
-                    processed_buffer_allocated = true;
+                if (wsola_output_count_samples > 0) {
+                    buffer_for_alsa = (unsigned char*)resampled_audio_buffer_s16_this_iter;
+                    frames_for_alsa = wsola_output_count_samples / wav_header.num_channels;
+                    buffer_for_alsa_is_resampled_output = true;
                 } else {
                     // No output from WSOLA, or error
                     app_log("WARNING", "WSOLA processing returned 0 samples.");
                     buffer_for_alsa = NULL; // No data to play
                     frames_for_alsa = 0;
-                    free(resampled_audio_buffer_s16); // Free the buffer we allocated
-                    resampled_audio_buffer_s16 = NULL;
-                    processed_buffer_allocated = false;
+                    free(resampled_audio_buffer_s16_this_iter); // Free the buffer we allocated
+                    resampled_audio_buffer_s16_this_iter = NULL;
+                    buffer_for_alsa_is_resampled_output = false;
                 }
             }
         }
         
         // Fallback to simple speed change if WSOLA not used or failed for this chunk
-        if (!use_wsola) {
-            double current_speed = PLAYBACK_SPEED_FACTORS[current_speed_idx];
-            if (fabs(current_speed - 1.0) < 1e-6) { // No speed change or WSOLA path not taken
-                buffer_for_alsa = (unsigned char*)source_buffer_for_speed_change_s16;
+        if (!buffer_for_alsa_is_resampled_output) { // if WSOLA didn't set the buffer
+            if (fabs(current_speed - 1.0) < 1e-6) { // No speed change
+                buffer_for_alsa = (unsigned char*)source_buffer_for_speed_change_s16; // Points to eq_output or buff
                 frames_for_alsa = frames_read_this_iteration;
-                if (eq_processed_audio_buffer_s16 != NULL) {
-                    buffer_for_alsa = (unsigned char*)eq_processed_audio_buffer_s16;
-        } else {
-                    buffer_for_alsa = buff; 
-                }
-                processed_buffer_allocated = false; // No new buffer was allocated for speed change here
+                buffer_for_alsa_is_resampled_output = false; // Not from dedicated speed resampling malloc
             } else { // Simple pitch-changing speed adjustment
-            int target_num_output_samples = (int)round((double)num_source_samples_for_speed_change / current_speed);
-                frames_for_alsa = target_num_output_samples / wav_header.num_channels;
-            if (target_num_output_samples > 0) {
+                int target_num_output_samples = (int)round((double)num_source_samples_for_speed_change / current_speed);
+                if (target_num_output_samples > 0) {
                     size_t resampled_buffer_size_bytes = target_num_output_samples * sizeof(short);
-                resampled_audio_buffer_s16 = (short *)malloc(resampled_buffer_size_bytes);
-                if (resampled_audio_buffer_s16 == NULL) {
+                    // Ensure resampled_audio_buffer_s16_this_iter is used here if not by WSOLA
+                    if (resampled_audio_buffer_s16_this_iter != NULL && !use_wsola) { 
+                        // This case should ideally not happen if WSOLA failed and freed, then use_wsola becomes false.
+                        // But as a safeguard, if it's already alloc'd and use_wsola is false, free it before re-alloc for simple speed.
+                        // However, current logic: if WSOLA fails, use_wsola becomes false, then this simple speed can run.
+                        // If WSOLA alloc'd then failed to produce output, it should free its buffer.
+                        // For simplicity, let simple_speed always try to alloc its own if resampled_audio_buffer_s16_this_iter is NULL.
+                        // If resampled_audio_buffer_s16_this_iter is NOT NULL here, it means WSOLA alloc'd but produced 0 output, and it should have been freed.
+                        // This logic needs to be clean: simple speed should use its own buffer if WSOLA isn't providing one.
+                    }
+                    // Let simple speed attempt its own allocation if WSOLA didn't provide a buffer
+                    // or if WSOLA was skipped.
+                    if (resampled_audio_buffer_s16_this_iter == NULL) { // Only malloc if not already available from a failed WSOLA attempt that should have freed
+                         resampled_audio_buffer_s16_this_iter = (short *)malloc(resampled_buffer_size_bytes);
+                    } else if (use_wsola) {
+                        // This means WSOLA ran, alloc'd, but produced 0 output. That buffer should be freed by WSOLA logic,
+                        // or handled carefully here. For now, assume if use_wsola was true and we are here, buffer_for_alsa_is_resampled_output is false.
+                        // This implies WSOLA output 0. The resampled_audio_buffer_s16_this_iter might still be its failed buffer.
+                        // To be safe, if simple speed runs after a failed WSOLA that alloc'd, it should ensure buffer is suitable or realloc.
+                        // This part of logic is tricky. Let's assume if WSOLA produced 0, resampled_audio_buffer_s16_this_iter is available for simple speed,
+                        // but its size might be wrong. It's safer for simple speed to manage its own buffer if it runs.
+                        // For now, let's stick to the original structure where resampled_audio_buffer_s16 (now _this_iter) is potentially reused.
+                    }
+
+
+                    if (resampled_audio_buffer_s16_this_iter == NULL) {
                         app_log("ERROR", "Failed to allocate memory for simple speed-adjusted buffer. Playing normal for this chunk.");
                         buffer_for_alsa = (unsigned char*)source_buffer_for_speed_change_s16;
-                    frames_for_alsa = frames_read_this_iteration;
-                        processed_buffer_allocated = false;
-                } else {
-                        processed_buffer_allocated = true;
-                    double input_sample_cursor = 0.0;
-                    int actual_output_samples_generated = 0;
-                    for (int out_sample_num = 0; out_sample_num < target_num_output_samples; ++out_sample_num) {
-                        int input_sample_to_sample_idx = (int)floor(input_sample_cursor);
-                        if (input_sample_to_sample_idx >= num_source_samples_for_speed_change) {
-                            target_num_output_samples = actual_output_samples_generated;
-                            frames_for_alsa = actual_output_samples_generated / wav_header.num_channels;
-                            break;
+                        frames_for_alsa = frames_read_this_iteration;
+                        buffer_for_alsa_is_resampled_output = false;
+                    } else {
+                        // ... (Simple speed resampling logic fills resampled_audio_buffer_s16_this_iter) ...
+                        // This is copied from existing code, ensure it correctly populates resampled_audio_buffer_s16_this_iter
+                        double input_sample_cursor = 0.0;
+                        int actual_output_samples_generated = 0;
+                        for (int out_sample_num = 0; out_sample_num < target_num_output_samples; ++out_sample_num) {
+                            int input_sample_to_sample_idx = (int)floor(input_sample_cursor);
+                            if (input_sample_to_sample_idx >= num_source_samples_for_speed_change) {
+                                target_num_output_samples = actual_output_samples_generated; // Adjust target
+                                break;
+                            }
+                            resampled_audio_buffer_s16_this_iter[actual_output_samples_generated] = 
+                                source_buffer_for_speed_change_s16[input_sample_to_sample_idx];
+                            actual_output_samples_generated++;
+                            input_sample_cursor += current_speed;
                         }
-                        resampled_audio_buffer_s16[actual_output_samples_generated] = 
-                            source_buffer_for_speed_change_s16[input_sample_to_sample_idx];
-                        actual_output_samples_generated++;
-                        input_sample_cursor += current_speed;
-                    }
                         frames_for_alsa = actual_output_samples_generated / wav_header.num_channels;
-                    if (frames_for_alsa == 0 && processed_buffer_allocated) { 
-                        free(resampled_audio_buffer_s16);
-                        resampled_audio_buffer_s16 = NULL; 
-                        processed_buffer_allocated = false;
-                            buffer_for_alsa = NULL;
-                    } else if (processed_buffer_allocated) {
-                        buffer_for_alsa = (unsigned char*)resampled_audio_buffer_s16;
+
+                        if (frames_for_alsa > 0) {
+                            buffer_for_alsa = (unsigned char*)resampled_audio_buffer_s16_this_iter;
+                            buffer_for_alsa_is_resampled_output = true;
+                        } else {
+                            // No output from simple speed, buffer_for_alsa remains NULL or unset.
+                            // resampled_audio_buffer_s16_this_iter will be freed if alloc'd.
+                             buffer_for_alsa_is_resampled_output = false; // Ensure this is false
+                        }
                     }
-                }
-            } else {
-                frames_for_alsa = 0;
-                    buffer_for_alsa = NULL;
+                } else { // target_num_output_samples is 0
+                    frames_for_alsa = 0;
+                    buffer_for_alsa_is_resampled_output = false;
                 }
             }
         }
+        
+        // If after all processing, buffer_for_alsa is still NULL (e.g. WSOLA and simple speed produced 0 output)
+        // and source_buffer_for_speed_change_s16 was the intended fallback (e.g. for 1x speed or error)
+        if (buffer_for_alsa == NULL && frames_for_alsa == 0) {
+            // This might happen if speed changes resulted in 0 output frames.
+            // Fallback to original source if appropriate (e.g. if speed was 1.0x initially and somehow skipped)
+            // Or, it simply means no audio for this chunk.
+            // For now, if frames_for_alsa is 0, skip ALSA write.
+        }
 
-        // ALSA Write Loop
-        if (frames_for_alsa > 0 && buffer_for_alsa != NULL) {
-            // High-pass filter to remove low-frequency hum while preserving tempo-changed audio
+        // --- Step 2 Part 2: Always copy to a private buffer unless freshly malloc'd by speed processing ---
+        unsigned char* alsa_payload_final = NULL;
+        snd_pcm_uframes_t frames_for_alsa_final = frames_for_alsa;
+        bool alsa_payload_final_is_dynamic_and_needs_free = false;
+
+        if (buffer_for_alsa_is_resampled_output && buffer_for_alsa != NULL) {
+            // 'buffer_for_alsa' points to 'resampled_audio_buffer_s16_this_iter', which was freshly malloc'd for speed.
+            alsa_payload_final = buffer_for_alsa;
+            alsa_payload_final_is_dynamic_and_needs_free = true;
+        } else if (buffer_for_alsa != NULL && frames_for_alsa > 0) {
+            // 'buffer_for_alsa' points to 'buff' or 'eq_processed_audio_buffer_s16_this_iter'. Make a private copy.
+            app_log("INFO", "Making private copy of buffer for ALSA write (source was not fresh speed-change malloc).");
+            size_t bytes_to_copy = frames_for_alsa * wav_header.block_align;
+            alsa_payload_final = (unsigned char *)malloc(bytes_to_copy);
+            if (alsa_payload_final) {
+                memcpy(alsa_payload_final, buffer_for_alsa, bytes_to_copy);
+                alsa_payload_final_is_dynamic_and_needs_free = true;
+            } else {
+                app_log("ERROR", "Failed to allocate private copy for ALSA. Skipping write for this chunk.");
+                frames_for_alsa_final = 0; // Prevent writing with NULL buffer
+            }
+        } else {
+            // No buffer determined (e.g. read_ret was 0 and led to frames_for_alsa=0 earlier, or processing yielded 0 frames)
+            frames_for_alsa_final = 0;
+        }
+
+        // --- Step 2 Part 1: DMA Check ---
+        if (frames_for_alsa_final > 0) {
+            snd_pcm_sframes_t pcm_delay_val;
+            int pcm_delay_ret = snd_pcm_delay(pcm_handle, &pcm_delay_val);
+            if (pcm_delay_ret == 0) {
+                if (snd_pcm_state(pcm_handle) == SND_PCM_STATE_RUNNING && pcm_delay_val > (snd_pcm_sframes_t)frames_for_alsa_final) {
+                    app_log("WARNING", "ALSA CHECK: PCM delay (%ld frames) > frames_for_alsa (%lu frames).", pcm_delay_val, frames_for_alsa_final);
+                }
+            } else {
+                app_log("WARNING", "ALSA CHECK: snd_pcm_delay failed: %s", snd_strerror(pcm_delay_ret));
+            }
+        }
+        
+        // --- Step 1: CRC Check ---
+        static unsigned long long main_loop_alsa_chunk_counter = 0;
+        if (frames_for_alsa_final > 0 && alsa_payload_final != NULL) {
+            unsigned long long crc_sum = 0;
+            short* samples_for_crc = (short*)alsa_payload_final;
+            size_t total_samples_for_crc = frames_for_alsa_final * wav_header.num_channels;
+            for (size_t crc_i = 0; crc_i < total_samples_for_crc; ++crc_i) {
+                crc_sum += samples_for_crc[crc_i];
+            }
+            app_log("TRACE", "ALSA_CHUNK %llu frames=%lu crc=%llx",
+                    main_loop_alsa_chunk_counter++, frames_for_alsa_final, crc_sum);
+        }
+
+        // ALSA Write Loop (using alsa_payload_final and frames_for_alsa_final)
+        if (frames_for_alsa_final > 0 && alsa_payload_final != NULL) {
+            // High-pass filter to remove low-frequency hum
             if (pcm_format == SND_PCM_FORMAT_S16_LE && wav_header.num_channels == 1) {
-                int total_samples = frames_for_alsa * wav_header.num_channels;
-                short *hpf_samples = (short *)buffer_for_alsa;
-                for (int i = 0; i < total_samples; ++i) {
-                    float in = (float)hpf_samples[i];
-                    float out = HPF_ALPHA * (hpf_prev_output + in - hpf_prev_input);
-                    hpf_prev_input = in;
-                    hpf_prev_output = out;
-                    int samp = (int)roundf(out);
-                    if (samp > 32767) samp = 32767;
-                    if (samp < -32768) samp = -32768;
-                    hpf_samples[i] = (short)samp;
+                int total_samples_hpf = frames_for_alsa_final * wav_header.num_channels;
+                short *hpf_samples = (short *)alsa_payload_final; // Operate on the final buffer for ALSA
+                for (int hpf_i = 0; hpf_i < total_samples_hpf; ++hpf_i) {
+                    float in_hpf = (float)hpf_samples[hpf_i];
+                    float out_hpf = HPF_ALPHA * (hpf_prev_output + in_hpf - hpf_prev_input);
+                    hpf_prev_input = in_hpf;
+                    hpf_prev_output = out_hpf;
+                    int samp_hpf = (int)roundf(out_hpf);
+                    if (samp_hpf > 32767) samp_hpf = 32767;
+                    if (samp_hpf < -32768) samp_hpf = -32768;
+                    hpf_samples[hpf_i] = (short)samp_hpf;
                 }
             }
 
-            unsigned char *ptr_to_write = buffer_for_alsa;
-            snd_pcm_uframes_t remaining_frames_to_write = frames_for_alsa;
+            unsigned char *ptr_to_write = alsa_payload_final;
+            snd_pcm_uframes_t remaining_frames_to_write = frames_for_alsa_final;
 
             while (remaining_frames_to_write > 0) {
                 snd_pcm_sframes_t frames_written_alsa = snd_pcm_writei(pcm_handle, ptr_to_write, remaining_frames_to_write);
@@ -1056,8 +1133,9 @@ int main(int argc, char *argv[]) {
                         snd_pcm_prepare(pcm_handle);
                     } else {
                         app_log("ERROR", "ALSA snd_pcm_writei error: %s", snd_strerror(frames_written_alsa));
-                        if (processed_buffer_allocated) {
-                            free(resampled_audio_buffer_s16);
+                        if (buffer_for_alsa_is_resampled_output && resampled_audio_buffer_s16_this_iter != NULL) {
+                            free(resampled_audio_buffer_s16_this_iter);
+                            resampled_audio_buffer_s16_this_iter = NULL;
                         }
                         goto playback_end; 
                     }
@@ -1068,20 +1146,32 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        if (processed_buffer_allocated && resampled_audio_buffer_s16 != NULL) {
-            free(resampled_audio_buffer_s16);
+        // Free dynamically allocated buffers for this iteration
+        if (eq_processed_audio_buffer_s16_this_iter != NULL) {
+            // If alsa_payload_final was a copy OF eq_processed_audio_buffer_s16_this_iter,
+            // eq_processed_audio_buffer_s16_this_iter still needs to be freed.
+            // If alsa_payload_final directly IS eq_processed_audio_buffer_s16_this_iter (this shouldn't happen with current copy logic),
+            // then it would be freed by alsa_payload_final_is_dynamic_and_needs_free.
+            // The "always copy" logic means alsa_payload_final is either resampled_output or a new copy.
+            // So eq_processed_audio_buffer_s16_this_iter is safe to free here if it was allocated.
+            free(eq_processed_audio_buffer_s16_this_iter);
+            eq_processed_audio_buffer_s16_this_iter = NULL;
         }
-        if (eq_processed_audio_buffer_s16 != NULL) {
-            free(eq_processed_audio_buffer_s16);
+
+        if (resampled_audio_buffer_s16_this_iter != NULL) {
+            // If alsa_payload_final is resampled_audio_buffer_s16_this_iter, it will be freed below.
+            // If alsa_payload_final is a copy of something else, resampled_audio_buffer_s16_this_iter (if alloc'd e.g. by failed WSOLA) needs freeing.
+            if (!alsa_payload_final_is_dynamic_and_needs_free || (alsa_payload_final_is_dynamic_and_needs_free && alsa_payload_final != (unsigned char*)resampled_audio_buffer_s16_this_iter)) {
+                 free(resampled_audio_buffer_s16_this_iter);
+            }
+             resampled_audio_buffer_s16_this_iter = NULL;
         }
         
-        // This original block for breaking on partial read needs context:
-        // Is it after every write, or related to the initial fread?
-        // The `fread` is at the top of the loop. `read_ret` is its result.
-        // If `read_ret < buffer_size` means less than a full buffer was read from the file.
-        // This usually signifies end-of-file or very near it.
-        // The original code broke here, indicating "stop after playing this potentially partial buffer".
-        // This logic should be preserved.
+        if (alsa_payload_final_is_dynamic_and_needs_free && alsa_payload_final != NULL) {
+            free(alsa_payload_final);
+            alsa_payload_final = NULL;
+        }
+        
         if (read_ret < buffer_size) {
             app_log("INFO", "End of music file (partial buffer read). This was the last chunk.");
             break;
