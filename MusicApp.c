@@ -112,7 +112,7 @@ static int fir_filter_history_idx = 0;      // Index for circular FIR history bu
 WSOLA_State *wsola_state = NULL;
 
 // --- WSOLA Function Prototypes ---
-static void generate_hann_window_q15(short *w, int N);
+static void generate_sine_window_q15(short *w, int N);
 static float calculate_normalized_cross_correlation(const short *segment1, const short *segment2, int length);
 static bool get_segment_from_ring_buffer(const WSOLA_State *state, int start_index_in_ring, int length, short *output_segment);
 static long long find_best_match_segment(
@@ -1586,48 +1586,15 @@ static void wsola_add_input_to_ring_buffer(WSOLA_State *state, const short *inpu
     }
 }
 
-// Generates a sine window: sin(pi * i / (L-1)) - REMOVED
-// static void generate_sine_window(float *float_window, int length)
-// {
-//     if (length <= 0)
-//         return;
-//     if (length == 1)
-//     {
-//         float_window[0] = 0.0f; // sin(0) = 0. A single point sine window is 0.
-//                                 // Or 1.0f if we want it to pass signal for L=1. But L=1 is an edge case.
-//                                 // For WSOLA, N is usually >> 1. Let's stick to sin(0)=0 for consistency.
-//         return;
-//     }
-//     for (int i = 0; i < length; i++)
-//     {
-//         float_window[i] = sinf(M_PI * (float)i / (float)(length - 1));
-//     }
-// }
-
-// Helper to convert float window to short Q15 window - REMOVED
-// static void convert_float_window_to_q15(const float *float_window, short *q15_window, int length)
-// {
-//     for (int i = 0; i < length; i++)
-//     {
-//         // Scale float window [0, 1] to Q15 range [-32768, 32767], typically [0, 32767] for window
-//         q15_window[i] = (short)(float_window[i] * 32767.0f);
-//     }
-// }
-
 /* ------- window generation ------------------------------------ */
-static void generate_hann_window_q15(short *w, int N)
-{
-    if (N <= 0) return; // Safety check for N > 0
-    if (N == 1) { // Handle N=1 edge case for Hann window
-        w[0] = (short)lrint(0.5 * (1.0 - cos(0.0)) * 32767.0); // Should be 0
-        // Or, more simply, 0.5 * (1 - 1) = 0. So w[0] = 0.
+static void generate_sine_window_q15(short *w,int N){
+    if (N <= 0) return; // Basic safety for N > 0
+    if (N == 1) { // sin(0) = 0 for N=1 (n=0 only)
         w[0] = 0;
         return;
     }
-    for (int n = 0; n < N; ++n) {
-        double hann = 0.5 * (1.0 - cos(2.0 * M_PI * n / (N - 1)));
-        w[n] = (short)lrint( hann * 32767.0 );      /* Q15 */
-    }
+    for(int n=0;n<N;n++)
+        w[n]=(short)lrint( sin(M_PI*n/(N-1)) * 32767.0 );
 }
 
 // Helper function to calculate normalized cross-correlation between two segments.
@@ -2132,8 +2099,8 @@ bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_a
         wsola_destroy(&s);
         return false;
     }
-    // Generate Hann window directly into Q15 analysis_window_function
-    generate_hann_window_q15(s->analysis_window_function, s->analysis_frame_samples);
+    // Generate Sine (sqrt-Hanning) window directly into Q15 analysis_window_function
+    generate_sine_window_q15(s->analysis_window_function, s->analysis_frame_samples);
 
     // Input ring buffer capacity calculation:
     // It needs to hold at least one full input chunk from the main app, 
@@ -2159,12 +2126,6 @@ bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_a
         samples_from_main_fread = 12288; // Default if all else fails
 
     s->input_buffer_capacity = samples_from_main_fread + s->analysis_frame_samples + (2 * s->search_window_samples) + 1024; // Generous buffer
-    
-    // The old logic using MAX_WSOLA_FRAME_SAMPLES: 
-    // s->input_buffer_capacity = s->analysis_frame_samples + (2 * s->search_window_samples) + s->analysis_frame_samples; 
-    // if (s->input_buffer_capacity < MAX_WSOLA_FRAME_SAMPLES * 2) { 
-    //     s->input_buffer_capacity = MAX_WSOLA_FRAME_SAMPLES * 2;
-    // }
 
     s->input_buffer_ring = (short *)malloc(s->input_buffer_capacity * sizeof(short));
     if (!s->input_buffer_ring)
@@ -2231,11 +2192,6 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
     {
         return 0;
     }
-
-    // Explicit fade_in/fade_out buffers are removed as per direct sum OLA with sqrt-Hanning.
-    // static float *fade_out = NULL;
-    // static float *fade_in = NULL;
-    // static int last_fade_length = 0;
 
     if (input_samples && num_input_samples > 0)
     {
@@ -2477,9 +2433,7 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
     }
     // --- End Conservative Ring Buffer Management ---
 
-    // state->total_output_samples_generated += output_samples_written; // Moved this update to after the loop
-    state->total_output_samples_generated += output_samples_written; // Ensure this is updated correctly
-    // state->total_input_samples_processed = state->next_ideal_input_frame_start_sample_offset; // This is an approximation
+    state->total_output_samples_generated += output_samples_written;
 
     return output_samples_written;
 }
