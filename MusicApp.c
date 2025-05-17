@@ -10,16 +10,45 @@
 #include <fcntl.h> // For non-blocking stdin
 #include <errno.h> // For snd_strerror(errno)
 #include <math.h>  // For sqrt, pow if we use more advanced curves later
+#include <time.h>    // For timestamps in logging
+#include <stdarg.h>  // For va_list in logging
 #include "const.h"
 
-// --- Logging Helper ---
-// Simple timestamp for logs (optional, can be expanded)
-void print_log_prefix() {
-    // For now, no timestamp to keep it simple like existing logs.
-    // If timestamps are needed, time.h functions can be used here.
-    // time_t now = time(NULL);
-    // struct tm *t = localtime(&now);
-    // printf("[%02d:%02d:%02d] ", t->tm_hour, t->tm_min, t->tm_sec);
+#ifndef SND_PCM_FORMAT_UNKNOWN // Guard against redefinition if const.h or other includes might have it
+#define SND_PCM_FORMAT_UNKNOWN (-1) // Example, actual value might differ or be in alsa/asoundlib.h
+#endif
+
+// --- Logging Globals and Function ---
+FILE *log_fp = NULL;
+const char *LOG_FILE_NAME = "music_app.log";
+
+void app_log(const char *type, const char *format, ...) {
+    if (log_fp == NULL) { // Fallback if log file couldn't be opened
+        // This is a last resort, should not happen if main's check is correct.
+        // If it does, print to stderr to indicate critical log failure.
+        fprintf(stderr, "CRITICAL_LOG_FAILURE: Attempted to log when log_fp is NULL. Type: %s\n", type);
+        va_list args_err;
+        va_start(args_err, format);
+        vfprintf(stderr, format, args_err);
+        va_end(args_err);
+        fprintf(stderr, "\n");
+        return;
+    }
+
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    char timestamp[20]; // "YYYY-MM-DD HH:MM:SS"
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", t);
+
+    fprintf(log_fp, "[%s] [%s] ", timestamp, type);
+
+    va_list args;
+    va_start(args, format);
+    vfprintf(log_fp, format, args);
+    va_end(args);
+
+    fprintf(log_fp, "\n");
+    fflush(log_fp); // Ensure logs are written immediately
 }
 
 // --- ALSA Mixer Globals for Volume Control ---
@@ -243,14 +272,14 @@ void open_music_file(const char *path_name) {
 // Function to load the current track
 bool load_track(int track_idx) {
     if (track_idx < 0 || track_idx >= num_music_files) {
-        print_log_prefix(); fprintf(stderr, "LOG ERROR: Track index %d out of bounds (0-%d).\n", track_idx, num_music_files - 1);
+        app_log("ERROR", "Track index %d out of bounds (0-%d).", track_idx, num_music_files - 1);
         return false;
     }
     if (fp != NULL) {
         fclose(fp);
         fp = NULL;
     }
-    print_log_prefix(); printf("LOG INFO: Loading track %d/%d: %s\n", track_idx + 1, num_music_files, music_files[track_idx]);
+    app_log("INFO", "Loading track %d/%d: %s", track_idx + 1, num_music_files, music_files[track_idx]);
     open_music_file(music_files[track_idx]); // open_music_file handles its own errors/exit
 
     // Reset playback state for the new track
@@ -276,7 +305,15 @@ int main(int argc, char *argv[]) {
     bool user_specified_format = false;
     int original_stdin_flags = -1;
 
-    print_log_prefix(); printf("LOG INFO: MusicApp starting...\n");
+    log_fp = fopen(LOG_FILE_NAME, "a");
+    if (log_fp == NULL) {
+        // This is a critical failure: cannot open log file.
+        // Print to stderr as per fallback logic, then exit.
+        perror("CRITICAL_ERROR: Failed to open log file music_app.log");
+        exit(EXIT_FAILURE);
+    }
+
+    app_log("INFO", "MusicApp starting...");
 
     // --- Argument Parsing for multiple music files ---
     // Store music file paths provided as non-option arguments
@@ -357,7 +394,7 @@ int main(int argc, char *argv[]) {
         num_music_files = argc - optind;
         music_files = malloc(num_music_files * sizeof(char*));
         if (music_files == NULL) {
-            print_log_prefix(); fprintf(stderr, "LOG ERROR: Failed to allocate memory for music file list.\n");
+            app_log("ERROR", "Failed to allocate memory for music file list.");
             exit(EXIT_FAILURE);
         }
         for (int i = 0; i < num_music_files; i++) {
@@ -374,7 +411,7 @@ int main(int argc, char *argv[]) {
         // No music files provided as non-option arguments
         // Check if -m was used (legacy) - this part needs to be cleaner if -m is kept
         // For now, if no files after options, it's an error.
-        print_log_prefix(); fprintf(stderr, "LOG ERROR: No music files provided.\n");
+        app_log("ERROR", "No music files provided.");
         fprintf(stderr, "Usage: %s [options] <music_file1.wav> [music_file2.wav ...]\n", argv[0]);
         fprintf(stderr, "Options: [-f <format_code>] [-r <rate_code>] [-d <device_code>]\n");
         exit(EXIT_FAILURE);
@@ -409,7 +446,7 @@ int main(int argc, char *argv[]) {
 
     // Final check if critical parameters are set
     if (rate == 0 || pcm_format == SND_PCM_FORMAT_UNKNOWN) {
-        print_log_prefix(); fprintf(stderr, "LOG ERROR: Critical parameters (rate or format) could not be determined.\n");
+        app_log("ERROR", "Critical parameters (rate or format) could not be determined.");
         exit(EXIT_FAILURE);
     }
 
@@ -431,11 +468,11 @@ int main(int argc, char *argv[]) {
     buffer_size = period_size * periods;
     buff = (unsigned char *)malloc(buffer_size);
     if (buff == NULL) {
-        print_log_prefix(); fprintf(stderr, "LOG ERROR: Failed to allocate memory for playback buffer.\n");
+        app_log("ERROR", "Failed to allocate memory for playback buffer.");
         exit(EXIT_FAILURE);
     }
     if (wav_header.block_align == 0) {
-        print_log_prefix(); fprintf(stderr, "LOG ERROR: WAV header block_align is zero.\n");
+        app_log("ERROR", "WAV header block_align is zero.");
         exit(EXIT_FAILURE);
     }
     snd_pcm_uframes_t local_period_size_frames = period_size / wav_header.block_align;
@@ -451,9 +488,9 @@ int main(int argc, char *argv[]) {
     snd_pcm_hw_params_free(hw_params);
 
     if (!init_mixer()) {
-        print_log_prefix(); printf("LOG WARNING: Failed to initialize mixer. Volume control will not be available.\n");
+        app_log("WARNING", "Failed to initialize mixer. Volume control will not be available.");
     } else {
-        print_log_prefix(); printf("LOG INFO: Volume control initialized. Use '+' to increase, '-' to decrease volume. 'p' to pause/resume. ',' for prev, '.' for next track. '['/']' for speed.\n");
+        app_log("INFO", "Volume control initialized. Use '+' to increase, '-' to decrease volume. 'p' to pause/resume. ',' for prev, '.' for next track. '['/']' for speed.");
         original_stdin_flags = fcntl(STDIN_FILENO, F_GETFL, 0);
         if (original_stdin_flags != -1) {
             if (fcntl(STDIN_FILENO, F_SETFL, original_stdin_flags | O_NONBLOCK) == -1) {
@@ -475,28 +512,27 @@ int main(int argc, char *argv[]) {
                     playback_paused = !playback_paused;
                     if (playback_paused) {
                         snd_pcm_pause(pcm_handle, 1);
-                        print_log_prefix(); printf("LOG INFO: Playback PAUSED. Press 'p' to resume.\n");
+                        app_log("INFO", "Playback PAUSED. Press 'p' to resume.");
                     } else {
                         snd_pcm_pause(pcm_handle, 0);
-                        print_log_prefix(); printf("LOG INFO: Playback RESUMED.\n");
+                        app_log("INFO", "Playback RESUMED.");
                     }
                 }
                 else if (c_in == 'f') { // Seek Forward
                     long seek_offset = 10 * wav_header.byte_rate; // 10 seconds
                     if (fseek(fp, seek_offset, SEEK_CUR) == 0) {
-                        print_log_prefix(); printf("LOG INFO: Seek FORWARD 10 seconds.\n");
+                        app_log("INFO", "Seek FORWARD 10 seconds.");
                         // Optional: Consider clearing/resetting ALSA buffer if issues occur
                         // snd_pcm_drop(pcm_handle);
-                        // snd_pcm_prepare(pcm_handle);
                     } else {
                         perror("Seek forward failed");
-                        print_log_prefix(); fprintf(stderr, "LOG WARNING: Seek forward failed for %ld bytes.\n", seek_offset);
+                        app_log("WARNING", "Seek forward failed for %ld bytes.", seek_offset);
                     }
                 }
                 else if (c_in == 'b') { // Seek Backward
                     long seek_offset = -10 * wav_header.byte_rate; // 10 seconds backward
                     if (fseek(fp, seek_offset, SEEK_CUR) == 0) {
-                        print_log_prefix(); printf("LOG INFO: Seek BACKWARD 10 seconds.\n");
+                        app_log("INFO", "Seek BACKWARD 10 seconds.");
                         // Optional: Consider clearing/resetting ALSA buffer
                         // snd_pcm_drop(pcm_handle);
                         // snd_pcm_prepare(pcm_handle);
@@ -504,56 +540,55 @@ int main(int argc, char *argv[]) {
                         //perror("Seek backward failed"); // fseek might fail if seeking before start
                         // Try seeking to the beginning of the data if seek_offset is too large
                         fseek(fp, sizeof(struct WAV_HEADER), SEEK_SET); // Go to start of data
-                         print_log_prefix(); printf("LOG INFO: Seek BACKWARD 10 seconds (or to start of data).\n");
+                        app_log("INFO", "Seek BACKWARD 10 seconds (or to start of data).");
                     }
                 }
                 else if (c_in == '.') { // Next Track
                     if (num_music_files > 1) {
                         current_track_idx = (current_track_idx + 1) % num_music_files;
                         if (load_track(current_track_idx)) {
-                            // Potentially reset ALSA or prepare for new track. load_track should handle basics.
-                            print_log_prefix(); printf("LOG INFO: Playing NEXT track: %s\n", music_files[current_track_idx]);
+                            app_log("INFO", "Playing NEXT track: %s", music_files[current_track_idx]);
                             // Ensure ALSA is ready for new data. If sample rates/formats can vary wildly,
                             // a more robust ALSA re-init (like in main after first load) might be needed.
                             // For now, assume open_music_file and subsequent ALSA setup handles it or files are compatible.
                             // snd_pcm_drain(pcm_handle); // Drain old data
                             // snd_pcm_prepare(pcm_handle); // Prepare for new data
                         } else {
-                            print_log_prefix(); fprintf(stderr, "LOG ERROR: Failed to load next track.\n");
+                            app_log("ERROR", "Failed to load next track.");
                             // Decide how to handle this - stop playback, try next, etc.
                         }
                     } else {
-                        print_log_prefix(); printf("LOG INFO: No next track available.\n");
+                        app_log("INFO", "No next track available.");
                     }
                 }
                 else if (c_in == ',') { // Previous Track
                     if (num_music_files > 1) {
                         current_track_idx = (current_track_idx - 1 + num_music_files) % num_music_files;
                         if (load_track(current_track_idx)) {
-                            print_log_prefix(); printf("LOG INFO: Playing PREVIOUS track: %s\n", music_files[current_track_idx]);
+                            app_log("INFO", "Playing PREVIOUS track: %s", music_files[current_track_idx]);
                             // Similar ALSA considerations as for next track
                             // snd_pcm_drain(pcm_handle);
                             // snd_pcm_prepare(pcm_handle);
                         } else {
-                            print_log_prefix(); fprintf(stderr, "LOG ERROR: Failed to load previous track.\n");
+                            app_log("ERROR", "Failed to load previous track.");
                         }
                     } else {
-                        print_log_prefix(); printf("LOG INFO: No previous track available.\n");
+                        app_log("INFO", "No previous track available.");
                     }
                 }
                 else if (c_in == '[') { // Decrease speed
                     if (current_speed_idx > 0) {
                         current_speed_idx--;
                     }
-                    print_log_prefix(); printf("LOG INFO: Playback speed: %.1fx\n", PLAYBACK_SPEED_FACTORS[current_speed_idx]);
-                    // TODO: Implement actual speed change logic here
+                    app_log("INFO", "Playback speed: %.1fx", PLAYBACK_SPEED_FACTORS[current_speed_idx]);
+                    // No TODO needed here, logic is in the main playback section
                 }
                 else if (c_in == ']') { // Increase speed
                     if (current_speed_idx < NUM_SPEED_LEVELS - 1) {
                         current_speed_idx++;
                     }
-                    print_log_prefix(); printf("LOG INFO: Playback speed: %.1fx\n", PLAYBACK_SPEED_FACTORS[current_speed_idx]);
-                    // TODO: Implement actual speed change logic here
+                    app_log("INFO", "Playback speed: %.1fx", PLAYBACK_SPEED_FACTORS[current_speed_idx]);
+                    // No TODO needed here, logic is in the main playback section
                 }
                 while(read(STDIN_FILENO, &c_in, 1) == 1 && c_in != '\n'); // Consume rest of line
             }
@@ -566,20 +601,20 @@ int main(int argc, char *argv[]) {
 
         read_ret = fread(buff, 1, buffer_size, fp);
         if (read_ret == 0) {
-            print_log_prefix(); printf("LOG INFO: End of music file input! (fread returned 0)\n");
+            app_log("INFO", "End of music file input! (fread returned 0)");
             // --- Autoplay Next Track --- 
             if (num_music_files > 1 && current_track_idx < num_music_files -1 ){
                 current_track_idx++;
-                print_log_prefix(); printf("LOG INFO: Auto-playing next track...\n");
+                app_log("INFO", "Auto-playing next track...");
                 if(load_track(current_track_idx)){
                     // snd_pcm_prepare(pcm_handle); // Prepare ALSA for new track
                     continue; // Continue to next iteration of while(1) to play new track
                 } else {
-                    print_log_prefix(); fprintf(stderr, "LOG ERROR: Failed to auto-play next track. Stopping.\n");
+                    app_log("ERROR", "Failed to auto-play next track. Stopping.");
                     break; // Or handle error differently
                 }
             } else if (num_music_files > 1 && current_track_idx == num_music_files -1) {
-                 print_log_prefix(); printf("LOG INFO: End of playlist.\n");
+                 app_log("INFO", "End of playlist.");
                  break;
             } else {
                  break; // Single file or last file in playlist ended
@@ -587,53 +622,125 @@ int main(int argc, char *argv[]) {
         }
         if (read_ret < 0) {
             perror("Error reading PCM data from file");
-            break;
-        }
-        snd_pcm_uframes_t frames_to_write = read_ret / wav_header.block_align;
-        if (frames_to_write == 0 && read_ret > 0) { // Read some data but not enough for a full frame
-             print_log_prefix(); printf("LOG INFO: Partial frame data at end of file, %d bytes ignored.\n", read_ret);
-             break;
-        }
-         if (frames_to_write == 0) { // No complete frames to write
+            app_log("ERROR", "Error reading PCM data from file: %s", strerror(errno));
             break;
         }
 
+        snd_pcm_uframes_t frames_read_this_iteration = read_ret / wav_header.block_align;
+        
+        if (frames_read_this_iteration == 0) {
+            if (read_ret > 0) { // Partial frame data
+                app_log("INFO", "Partial frame data at end of file, %d bytes ignored.", read_ret);
+            }
+            // If read_ret was 0, the earlier check (fread returned 0) handles it.
+            // If partial frame, existing logic was to break. Let's maintain that.
+            break; 
+        }
 
-        snd_pcm_sframes_t frames_written_alsa;
-        unsigned char *ptr = buff;
-        snd_pcm_uframes_t remaining_frames = frames_to_write;
+        unsigned char *buffer_for_alsa = NULL;
+        snd_pcm_uframes_t frames_for_alsa = 0;
+        bool processed_buffer_allocated = false;
 
-        while(remaining_frames > 0) {
-            frames_written_alsa = snd_pcm_writei(pcm_handle, ptr, remaining_frames);
-            if (frames_written_alsa < 0) {
-                if (frames_written_alsa == -EPIPE) {
-                    fprintf(stderr, "underrun occurred -32, preparing interface...\n");
-                    snd_pcm_prepare(pcm_handle);
+        double current_speed = PLAYBACK_SPEED_FACTORS[current_speed_idx];
+
+        if (fabs(current_speed - 1.0) < 1e-6) { // Compare double for equality with tolerance
+            buffer_for_alsa = buff;
+            frames_for_alsa = frames_read_this_iteration;
+        } else {
+            // Calculate target number of output frames
+            frames_for_alsa = (snd_pcm_uframes_t)round((double)frames_read_this_iteration / current_speed);
+
+            if (frames_for_alsa > 0) {
+                size_t processed_buffer_size_bytes = frames_for_alsa * wav_header.block_align;
+                buffer_for_alsa = (unsigned char *)malloc(processed_buffer_size_bytes);
+
+                if (buffer_for_alsa == NULL) {
+                    app_log("ERROR", "Failed to allocate memory for speed-adjusted buffer (size %zu). Playing normal for this chunk.", processed_buffer_size_bytes);
+                    // Fallback to normal speed for this chunk
+                    buffer_for_alsa = buff;
+                    frames_for_alsa = frames_read_this_iteration;
+                    // processed_buffer_allocated remains false
                 } else {
-                    fprintf(stderr, "Error from snd_pcm_writei: %s\n", snd_strerror(frames_written_alsa));
-                    goto playback_end; // Break outer loop
+                    processed_buffer_allocated = true;
+                    double input_frame_cursor = 0.0; // "Current position" in the input buffer, in terms of frames
+                    snd_pcm_uframes_t actual_output_frames_generated = 0;
+                    
+                    for (snd_pcm_uframes_t out_frame_num = 0; out_frame_num < frames_for_alsa; ++out_frame_num) {
+                        int input_frame_to_sample = (int)floor(input_frame_cursor);
+                        
+                        if (input_frame_to_sample >= frames_read_this_iteration) {
+                            // Consumed all available input frames from buff.
+                            // Correct the number of output frames we can actually make.
+                            frames_for_alsa = actual_output_frames_generated; 
+                            break;
+                        }
+                        
+                        memcpy(buffer_for_alsa + (actual_output_frames_generated * wav_header.block_align),
+                               buff + (input_frame_to_sample * wav_header.block_align),
+                               wav_header.block_align);
+                        actual_output_frames_generated++;
+                        input_frame_cursor += current_speed;
+                    }
+                    // Ensure frames_for_alsa reflects actual frames put into buffer_for_alsa
+                    frames_for_alsa = actual_output_frames_generated;
+                    if (frames_for_alsa == 0 && processed_buffer_allocated) { // No frames generated, free buffer
+                        free(buffer_for_alsa);
+                        buffer_for_alsa = NULL; // Mark as freed
+                        processed_buffer_allocated = false;
+                    }
                 }
             } else {
-                ptr += frames_written_alsa * wav_header.block_align;
-                remaining_frames -= frames_written_alsa;
+                // frames_for_alsa calculated to 0 (e.g., very high speed, few input frames).
+                // No audio will be played for this input block.
+                // buffer_for_alsa remains NULL or unassigned.
+                // processed_buffer_allocated remains false.
+            }
+        }
 
-                // If playback was paused and then resumed, ALSA might need prepare
-                if (snd_pcm_state(pcm_handle) == SND_PCM_STATE_PAUSED && !playback_paused) {
-                    // This case might not be strictly necessary with snd_pcm_pause(pcm_handle, 0)
-                    // but good to be aware if issues arise after resume.
-                    // snd_pcm_prepare(pcm_handle); // Potentially needed if resume is not smooth
+        // ALSA Write Loop
+        if (frames_for_alsa > 0 && buffer_for_alsa != NULL) {
+            unsigned char *ptr_to_write = buffer_for_alsa;
+            snd_pcm_uframes_t remaining_frames_to_write = frames_for_alsa;
+
+            while (remaining_frames_to_write > 0) {
+                snd_pcm_sframes_t frames_written_alsa = snd_pcm_writei(pcm_handle, ptr_to_write, remaining_frames_to_write);
+                if (frames_written_alsa < 0) {
+                    if (frames_written_alsa == -EPIPE) {
+                        app_log("WARNING", "ALSA underrun occurred (EPIPE), preparing interface.");
+                        snd_pcm_prepare(pcm_handle);
+                    } else {
+                        app_log("ERROR", "ALSA snd_pcm_writei error: %s", snd_strerror(frames_written_alsa));
+                        if (processed_buffer_allocated) {
+                            free(buffer_for_alsa);
+                        }
+                        goto playback_end; 
+                    }
+                } else {
+                    ptr_to_write += frames_written_alsa * wav_header.block_align;
+                    remaining_frames_to_write -= frames_written_alsa;
                 }
             }
         }
 
+        if (processed_buffer_allocated && buffer_for_alsa != NULL) {
+            free(buffer_for_alsa);
+        }
+        
+        // This original block for breaking on partial read needs context:
+        // Is it after every write, or related to the initial fread?
+        // The `fread` is at the top of the loop. `read_ret` is its result.
+        // If `read_ret < buffer_size` means less than a full buffer was read from the file.
+        // This usually signifies end-of-file or very near it.
+        // The original code broke here, indicating "stop after playing this potentially partial buffer".
+        // This logic should be preserved.
         if (read_ret < buffer_size) {
-            print_log_prefix(); printf("LOG INFO: End of music file (partial buffer read).\n");
-            break;
+            app_log("INFO", "End of music file (partial buffer read). This was the last chunk.");
+            break; 
         }
     }
 
 playback_end:
-    print_log_prefix(); printf("LOG INFO: Playback finished or stopped.\n");
+    app_log("INFO", "Playback finished or stopped.");
     snd_pcm_drain(pcm_handle);
     if (mixer_handle && original_stdin_flags != -1) {
         if (fcntl(STDIN_FILENO, F_SETFL, original_stdin_flags) == -1) {
@@ -650,6 +757,10 @@ playback_end:
         // Here, they point to argv, so no individual free needed.
         free(music_files);
     }
-    print_log_prefix(); printf("LOG INFO: MusicApp exiting normally.\n");
+    app_log("INFO", "MusicApp exiting normally.");
+    if (log_fp != NULL) {
+        fclose(log_fp);
+        log_fp = NULL; // Good practice to NULL out closed file pointers
+    }
     return 0;
 }

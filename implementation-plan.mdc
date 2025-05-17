@@ -7,11 +7,11 @@ alwaysApply: false
 
 ## Feature Checklist
 
-- [ ] 1. 调节上一曲和下一曲 (Previous/Next Track) (15%)
+- [x] 1. 调节上一曲和下一曲 (Previous/Next Track) (15%)
 - [ ] 2. 多种倍速播放【0.5，1，1.5，2 倍速】(Playback Speed Control) (25%)
-- [ ] 3. 快进快退【快进 10s，快退 10s】(Seek Forward/Backward) (20%)
-- [ ] 4. 暂停继续 (Pause/Resume) (10%)
-- [ ] 5. 日志输出 (Logging Output) (15%)
+- [x] 3. 快进快退【快进 10s，快退 10s】(Seek Forward/Backward) (20%)
+- [x] 4. 暂停继续 (Pause/Resume) (10%)
+- [x] 5. 日志输出 (Logging Output) (15%)
 
 ## Detailed Steps
 
@@ -46,8 +46,8 @@ alwaysApply: false
 - Add a global variable for current speed multiplier (0.5, 1.0, 1.5, 2.0).
 - Add key bindings to cycle through speeds.
 - Implement changes to ALSA parameters or data processing pipeline. This might involve recalculating buffer sizes or sample rates dynamically.
-- *Partially Done*
-  - Summary: Added global variables for playback speed factors (`PLAYBACK_SPEED_FACTORS`, `NUM_SPEED_LEVELS`, `current_speed_idx`). Implemented key bindings '[' and ']' to cycle through speeds (0.5x, 1.0x, 1.5x, 2.0x) and print the selected speed. The core logic for actual speed adjustment of audio playback is NOT yet implemented and requires significant further work (software resampling or advanced ALSA features).
+- *Done*
+  - Summary: Implemented playback speed control for factors 0.5x, 1.0x, 1.5x, and 2.0x using '[' and ']' keys. The core logic involves software resampling (sample duplication/dropping) of the audio data from the input buffer (`buff`) into a temporary dynamically allocated buffer (`buffer_for_alsa`) before sending it to `snd_pcm_writei`. The amount of data read from the file per iteration remains the same, but the data written to ALSA is adjusted to achieve the desired speed. Error handling for memory allocation of the temporary buffer is included, with a fallback to normal speed for the current chunk if allocation fails. Logging calls were updated to use `app_log`.
 
 ### 5. Logging Output
 - Review existing `printf` statements.
@@ -55,7 +55,7 @@ alwaysApply: false
 - Consider adding a log level or a way to toggle verbose logging if needed.
 - If complex, consider writing logs to a file.
 - *Done*
-  - Summary: Added a `print_log_prefix()` (currently a no-op, for potential timestamping). Prefixed many existing and new user-facing messages and error messages with `LOG INFO:`, `LOG WARNING:`, or `LOG ERROR:`. Added application start and normal exit log messages. This enhances the clarity of console output based on the existing `printf` style.
+  - Summary: Standardized logging to use the `app_log` function throughout the application, including for the newly implemented playback speed functionality and for previously modified features. This provides consistent log formatting with timestamps and log types (INFO, ERROR, WARNING). Replaced direct `fprintf(stderr, ...)` and `printf(...)` calls for logging purposes with `app_log`.
 
 ### General
 - Update README.md with new features and controls.
@@ -64,3 +64,14 @@ alwaysApply: false
 - Ensure error handling is robust for all new functionalities.
 - *Partially Done*
   - Summary: Basic error handling (e.g., for file operations, memory allocation, ALSA calls) exists. Some new error messages were added. However, a comprehensive review and enhancement of error handling across all new features, especially for edge cases and recovery, would be a larger task and is considered partially addressed by the logging improvements and specific checks added.
+
+# Implementation Plan
+
+This document tracks the implementation of features and major changes in the MusicApp project.
+
+## Feature: Playback Speed Control
+
+-   **Status**: In Progress
+-   **Details**: Implement variable playback speed for audio files.
+    -   Allow users to increase or decrease playback speed using '[' and ']' keys.
+    -   Modify audio processing loop to resample audio data based on selected speed factor.

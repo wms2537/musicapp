@@ -13,10 +13,9 @@ This is a command-line WAV audio player for Linux using ALSA for playback and vo
 *   Next track ('.' key).
 *   Previous track (',' key).
 *   Auto-plays next track in the playlist.
-*   Playback speed selection UI ('[' to decrease, ']' to increase speed between 0.5x, 1.0x, 1.5x, 2.0x).
-    *   **Note**: The actual audio processing for changing playback speed is not yet implemented.
+*   Playback speed selection and control ('[' to decrease, ']' to increase speed between 0.5x, 1.0x, 1.5x, 2.0x).
 *   Selectable output device (on-board speaker vs external via -d option).
-*   Basic logging to console.
+*   Enhanced logging to console (using `app_log` with timestamps and types) and to `music_app.log` file.
 
 ## Compilation
 
@@ -63,8 +62,8 @@ If format or rate are not specified, the program attempts to infer them from the
 *   `b`: Seek backward 10 seconds.
 *   `.`: Play next track.
 *   `,`: Play previous track.
-*   `[`: Decrease playback speed (cycles through 0.5x, 1.0x, 1.5x, 2.0x - UI only for now).
-*   `]`: Increase playback speed (cycles through 0.5x, 1.0x, 1.5x, 2.0x - UI only for now).
+*   `[`: Decrease playback speed (cycles through 0.5x, 1.0x, 1.5x, 2.0x).
+*   `]`: Increase playback speed (cycles through 0.5x, 1.0x, 1.5x, 2.0x).
 
 ## Dependencies
 
@@ -73,8 +72,7 @@ If format or rate are not specified, the program attempts to infer them from the
 
 ## Known Issues / Future Work
 
-*   **Playback Speed Implementation**: The core logic for actually changing the audio playback speed (resampling/pitch shifting) is not yet implemented.
 *   **ALSA Re-initialization for Diverse Tracks**: When switching tracks in a playlist, if WAV files have different audio parameters (sample rate, channels, format), the ALSA re-initialization might not be robust enough. It currently relies on the initial setup logic. More dedicated ALSA reconfiguration might be needed in `load_track()`.
 *   **Error Handling**: Further improvements to error handling and recovery.
-*   **Advanced Logging**: Implement timestamped logs or log levels.
+*   **Advanced Logging**: While improved, log rotation or more configurable levels could be added.
 *   **Code Structure**: For larger feature sets, refactoring into more functions/modules would be beneficial. 
