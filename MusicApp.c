@@ -105,7 +105,7 @@ static int fir_filter_history_idx = 0;    // Index for circular FIR history buff
 WSOLA_State *wsola_state = NULL;
 
 // --- WSOLA Function Prototypes ---
-static void generate_hanning_window(float *float_window, int length);
+static void generate_sine_window(float *float_window, int length);
 static void convert_float_window_to_q15(const float* float_window, short* q15_window, int length);
 static float calculate_normalized_cross_correlation(const short *segment1, const short *segment2, int length);
 static bool get_segment_from_ring_buffer(const WSOLA_State *state, int start_index_in_ring, int length, short *output_segment);
@@ -1254,10 +1254,12 @@ static void wsola_add_input_to_ring_buffer(WSOLA_State *state, const short *inpu
 // For now, this function will be a placeholder as we need to decide on float vs fixed-point for window.
 // Let's assume it populates a float array first, then it's converted to short if needed.
 // For simplicity here, we'll compute float values and assume they'll be scaled appropriately when used.
-static void generate_hanning_window(float *float_window, int length) {
+static void generate_sine_window(float *float_window, int length) {
     if (length <= 0) return;
     for (int i = 0; i < length; i++) {
-        float_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (float)(length - 1)));
+        // Sine window: sin(pi * i / (L-1)) for i = 0 to L-1
+        // This provides sqrt-Hanning properties for 50% OLA
+        float_window[i] = sinf(M_PI * (float)i / (float)(length - 1));
     }
 }
 
@@ -1677,8 +1679,12 @@ bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_a
 
     // Calculate derived parameters (integer samples)
     s->analysis_frame_samples = (s->sample_rate * analysis_frame_ms_arg) / 1000;
-    s->overlap_samples = (int)(s->analysis_frame_samples * overlap_percentage_arg);
-    s->analysis_hop_samples = s->analysis_frame_samples - s->overlap_samples; // Nominal input hop at 1x speed
+    // N_o (overlap_samples) is now N/2 for 50% OLA with sine window
+    s->overlap_samples = s->analysis_frame_samples / 2;
+    // Ensure overlap_samples is not zero if analysis_frame_samples is 1 (edge case)
+    if (s->analysis_frame_samples == 1 && s->overlap_samples == 0) s->overlap_samples = 1; 
+
+    s->analysis_hop_samples = s->analysis_frame_samples - s->overlap_samples; // Nominal input hop at 1x speed (will be N/2)
     
     // Synthesis hop depends on speed factor and should be adjusted based on playback speed
     // For slower speeds (< 1.0), synthesis_hop > analysis_hop
@@ -1707,13 +1713,13 @@ bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_a
         app_log("ERROR", "wsola_init: Failed to allocate memory for analysis_window_function.");
         wsola_destroy(&s); return false;
     }
-    // Generate Hanning window (float first, then convert to Q15 short)
+    // Generate Sine window (float first, then convert to Q15 short)
     float *temp_float_window = (float *)malloc(s->analysis_frame_samples * sizeof(float));
     if (!temp_float_window) {
         app_log("ERROR", "wsola_init: Failed to allocate memory for temp_float_window.");
         wsola_destroy(&s); return false;
     }
-    generate_hanning_window(temp_float_window, s->analysis_frame_samples);
+    generate_sine_window(temp_float_window, s->analysis_frame_samples);
     convert_float_window_to_q15(temp_float_window, s->analysis_window_function, s->analysis_frame_samples);
     free(temp_float_window);
 
@@ -1803,9 +1809,13 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         return 0; // No state or no place to put output
     }
 
-    // --- TEMPORARY BYPASS FOR 1.0x SPEED --- (REMOVING THIS BLOCK)
-    // if (fabs(state->current_speed_factor - 1.0) < 1e-6) { ... }
-    // --- END TEMPORARY BYPASS ---
+    // STATIC FADE WINDOWS REMOVED - NO LONGER USED
+    // static float *synthesis_window = NULL; // This was for a different windowing approach, also removed earlier
+    // static int last_synthesis_window_length = 0;
+
+    // static float *fade_out = NULL; // REMOVE
+    // static float *fade_in = NULL;  // REMOVE
+    // static int last_fade_length = 0; // REMOVE
 
     if (input_samples && num_input_samples > 0) {
         wsola_add_input_to_ring_buffer(state, input_samples, num_input_samples);
@@ -1814,39 +1824,28 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
     int output_samples_written = 0;
     int N = state->analysis_frame_samples;
     int N_o = state->overlap_samples;
-    int H_a = state->analysis_hop_samples; // Nominal analysis hop = N - N_o
-
-    // Effective synthesis hop size (how many output samples we generate per frame)
-    // This should be updated when speed factor changes
-    // Calculate effective synthesis hop size based on current speed factor
-    // For slow playback (speed < 1.0), we need MORE output samples (H_s_eff > H_a)
-    // For fast playback (speed > 1.0), we need FEWER output samples (H_s_eff < H_a)
+    int H_a = state->analysis_hop_samples; // Nominal analysis hop = N - N_o (now N/2)
     double speed = state->current_speed_factor;
     int H_s_eff = (int)round((double)H_a / speed);
     
-    // Update synthesis_hop_samples to reflect current speed factor
-    // state->synthesis_hop_samples = H_s_eff; // This was moved down
-    
-    // Safety check: ensure we always have a positive hop size, even with extreme speed factors
-    // if (H_s_eff <= 0) { // This check is implicitly handled by clamping below
-    //     H_s_eff = 1; 
-    //     state->synthesis_hop_samples = 1;
-    // }
+    // Clamp H_s_eff (User Step 3)
+    int min_synthesis_hop = state->analysis_frame_samples / 4;
+    if (min_synthesis_hop < 1) min_synthesis_hop = 1; // Ensure at least 1
+    int max_synthesis_hop = (state->analysis_frame_samples * 3) / 4;
+    if (max_synthesis_hop < min_synthesis_hop) max_synthesis_hop = min_synthesis_hop; // Ensure max >= min
 
-    // Clamp H_s_eff so we always have material and don't ask for too much/too little
-    if (H_s_eff > N) {         // N is state->analysis_frame_samples
-        H_s_eff = N;          // Max stretch: one full analysis frame
-        DBG("WSOLA_PROCESS: Clamped H_s_eff to N (%d) for slow speed %.2fx", N, speed);
+    if (H_s_eff < min_synthesis_hop) {
+        H_s_eff = min_synthesis_hop;
+        DBG("WSOLA_PROCESS: Clamped H_s_eff to min_synthesis_hop (%d) for speed %.2fx", min_synthesis_hop, speed);
     }
-    const int MIN_SYNTHESIS_HOP = N_o + 4; // N_o is state->overlap_samples
-    if (H_s_eff < MIN_SYNTHESIS_HOP) {
-        H_s_eff = MIN_SYNTHESIS_HOP; // Min synthesis: slightly more than overlap
-        DBG("WSOLA_PROCESS: Clamped H_s_eff to MIN_SYNTHESIS_HOP (%d) for fast speed %.2fx", MIN_SYNTHESIS_HOP, speed);
+    if (H_s_eff > max_synthesis_hop) {
+        H_s_eff = max_synthesis_hop;
+        DBG("WSOLA_PROCESS: Clamped H_s_eff to max_synthesis_hop (%d) for speed %.2fx", max_synthesis_hop, speed);
     }
     state->synthesis_hop_samples = H_s_eff; // Update state after clamping
 
-    DBG("WSOLA_PROCESS_ENTRY: num_input=%d, max_output=%d, current_speed=%.2f, H_a=%d, H_s_eff_clamped=%d, N=%d, N_o=%d, input_content_start=%d", 
-           num_input_samples, max_output_samples, state->current_speed_factor, H_a, H_s_eff, N, N_o, state->input_buffer_content);
+    DBG("WSOLA_PROCESS_ENTRY: N=%d, N_o=%d(N/2), H_a=%d(N/2), H_s_eff_clamped=%d (range %d-%d), speed=%.2f", 
+           N, N_o, H_a, H_s_eff, min_synthesis_hop, max_synthesis_hop, speed);
 
     int loop_iterations = 0;
     // Guard the main output loop: ensure space in output_buffer AND input for the next frame.
@@ -1902,9 +1901,7 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
             break; 
         }
 
-        // Apply the Q15 Hanning analysis window to the entire current_synthesis_segment (N samples).
-        // This tapers the full segment, ensuring smooth transitions when blended by the sqrt-Hanning OLA.
-        // This is crucial to prevent clicks at the boundary between the OLA region and the new part.
+        // Apply the Q15 Sine analysis window to the entire current_synthesis_segment (N samples).
         for (int i = 0; i < N; ++i) { // N is state->analysis_frame_samples
             long long val_ll = (long long)state->current_synthesis_segment[i] * state->analysis_window_function[i];
             state->current_synthesis_segment[i] = (short)(val_ll >> 15); // Q15 scaling
@@ -1914,151 +1911,58 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         int samples_written_this_frame_ola = 0;
         int samples_written_this_frame_new = 0;
 
-        // 1. Cross-fade overlap regions using a constant-power crossfade
-        // This is critical for WSOLA to prevent amplitude modulation/distortion
-        // Pre-compute the crossfade windows once
-        static float *fade_out = NULL;
-        static float *fade_in = NULL;
-        static int last_fade_length = 0;
-        
-        // Only regenerate windows if fade length has changed
-        if (fade_out == NULL || fade_in == NULL || last_fade_length != N_o) {
-            // Free previous windows if they exist
-            if (fade_out) free(fade_out);
-            if (fade_in) free(fade_in);
-            
-            // Allocate new windows
-            fade_out = (float *)malloc(N_o * sizeof(float));
-            fade_in = (float *)malloc(N_o * sizeof(float));
-            
-            if (fade_out && fade_in) {
-                last_fade_length = N_o;
+        // --- Overlap-Add with 50% Sine Window --- 
+        // The fade_in/fade_out arrays are no longer used.
+        // OLA is sum of previous frame's second half and current frame's first half.
+
+        for (int i = 0; i < N_o; ++i) { // N_o is N/2
+            if (output_samples_written < max_output_samples && samples_written_this_frame_ola < samples_to_write_this_frame) {
+                long long sum = (long long)state->output_overlap_add_buffer[i] + state->current_synthesis_segment[i];
                 
-                // Generate Constant-Power (sqrt-Hanning) crossfade windows
-                for (int i = 0; i < N_o; ++i) {
-                    // Position in window [0,1]
-                    float theta = (float)i / (float)(N_o - 1); // Normalized position 0 to 1
-                    
-                    // sqrt-Hanning pair (cos(pi*t/2), sin(pi*t/2))
-                    fade_out[i] = cosf((M_PI / 2.0f) * theta); 
-                    fade_in[i]  = sinf((M_PI / 2.0f) * theta);
-                }
+                // Clamp sum to 16-bit range
+                if (sum > 32767) sum = 32767;
+                else if (sum < -32768) sum = -32768;
                 
-                DBG("WSOLA: Generated new constant-power (sqrt-Hanning) crossfade windows, length=%d", N_o);
+                output_buffer[output_samples_written++] = (short)sum;
+                samples_written_this_frame_ola++;
+            } else {
+                break; // Output buffer full or enough samples for this part written
             }
         }
-        
-        // Apply crossfade with proper windows
-        if (fade_out && fade_in) {
-            for (int i = 0; i < N_o; ++i) {
-                if (output_samples_written < max_output_samples && 
-                    samples_written_this_frame_ola < samples_to_write_this_frame) {
-                    
-                    // Apply precise, constant-power crossfade with proper normalization
-                    float sample = (float)state->output_overlap_add_buffer[i] * fade_out[i] + 
-                                  (float)state->current_synthesis_segment[i] * fade_in[i];
-                    
-                    // Convert to integer with proper rounding and clamping
-                    int sample_int = (int)roundf(sample);
-                    if (sample_int > 32767) sample_int = 32767;
-                    if (sample_int < -32768) sample_int = -32768;
-                    
-                    output_buffer[output_samples_written++] = (short)sample_int;
-                    samples_written_this_frame_ola++;
+
+        // --- Write the "new" part (second half of current windowed segment) --- 
+        // This directly follows the OLA part, taking samples from current_synthesis_segment[N_o onwards]
+        // We need to write (H_s_eff - samples_written_this_frame_ola) more samples if H_s_eff > N_o
+
+        int needed_new_output_samples = samples_to_write_this_frame - samples_written_this_frame_ola;
+
+        if (needed_new_output_samples > 0) {
+            // Source for these new samples is current_synthesis_segment[N_o] onwards
+            // We directly copy these, as they are already tapered by the full sine window.
+            for (int j = 0; j < needed_new_output_samples; ++j) {
+                if (output_samples_written < max_output_samples) {
+                    if ((N_o + j) < N) { // Ensure we don't read past current_synthesis_segment bounds
+                        output_buffer[output_samples_written++] = state->current_synthesis_segment[N_o + j];
+                        samples_written_this_frame_new++;
+                    } else {
+                        // Should not happen if H_s_eff is clamped correctly (e.g., <= N) and N_o = N/2
+                        // If H_s_eff asks for more than N total samples from one segment, this is an issue.
+                        // Current H_s_eff clamping is 3N/4. Max samples from segment is N.
+                        // Max OLA part is N/2. Max new part needed is 3N/4 - N/2 = N/4.
+                        // So we read up to N/2 + N/4 = 3N/4 from current_synthesis_segment. This is fine.
+                        app_log("WARNING", "WSOLA: New part tried to read beyond current_synthesis_segment. N_o=%d, j=%d, N=%d", N_o, j, N);
+                        output_buffer[output_samples_written++] = 0; // Pad with silence if logic error
+                    }
                 } else {
                     break; // Output buffer full
                 }
             }
-        } else {
-            // Emergency fallback (should never happen with static allocation)
-            app_log("ERROR", "WSOLA: Failed to allocate crossfade windows. Using emergency fallback.");
-            for (int i = 0; i < N_o; ++i) {
-                if (output_samples_written < max_output_samples && 
-                    samples_written_this_frame_ola < samples_to_write_this_frame) {
-                    // Simplest linear crossfade with more optimal fade curves
-                    float t = (float)i / (float)(N_o - 1);
-                    float fade_out_val = sqrtf(1.0f - t);
-                    float fade_in_val = sqrtf(t);
-                    
-                    float sample = (float)state->output_overlap_add_buffer[i] * fade_out_val + 
-                                  (float)state->current_synthesis_segment[i] * fade_in_val;
-                    
-                    // Convert to short with proper rounding
-                    int sample_int = (int)roundf(sample);
-                    if (sample_int > 32767) sample_int = 32767;
-                    if (sample_int < -32768) sample_int = -32768;
-                    
-                    output_buffer[output_samples_written++] = (short)sample_int;
-                    samples_written_this_frame_ola++;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        // 2. Write the new part from current_synthesis_segment, potentially stretching or compressing
-        int needed_new_output_samples = samples_to_write_this_frame - samples_written_this_frame_ola;
-        if (needed_new_output_samples > 0) {
-            int available_new_samples_in_segment = N - N_o; // This is H_a
-
-            if (available_new_samples_in_segment <= 0 && needed_new_output_samples > 0) {
-                 app_log("WARNING", "WSOLA: No new samples available in synthesis segment (H_a=0), but needed %d output. Silence padding.", needed_new_output_samples);
-                 for (int i = 0; i < needed_new_output_samples; ++i) {
-                     if (output_samples_written < max_output_samples) {
-                         output_buffer[output_samples_written++] = 0; // Pad with silence
-                         samples_written_this_frame_new++;
-                     } else break;
-                 }
-            } else if (available_new_samples_in_segment > 0) {
-                double new_sample_read_cursor = 0.0;
-                // The source for these new samples is current_synthesis_segment[N_o] onwards
-                short *new_part_source = state->current_synthesis_segment + N_o;
-
-                for (int i = 0; i < needed_new_output_samples; ++i) {
-                    if (output_samples_written < max_output_samples) {
-                        int source_idx_floor = (int)floor(new_sample_read_cursor);
-                        double fraction = new_sample_read_cursor - source_idx_floor;
-
-                        short sample1, sample2;
-
-                        if (source_idx_floor >= available_new_samples_in_segment - 1) {
-                            // At or beyond the second to last sample, or if only one sample available
-                            sample1 = new_part_source[available_new_samples_in_segment - 1];
-                            sample2 = sample1; // No next sample to interpolate with, use last sample
-                        } else {
-                            sample1 = new_part_source[source_idx_floor];
-                            sample2 = new_part_source[source_idx_floor + 1];
-                        }
-                        
-                        // Linear interpolation
-                        short interpolated_sample = (short)round((1.0 - fraction) * sample1 + fraction * sample2);
-                        output_buffer[output_samples_written++] = interpolated_sample;
-                        samples_written_this_frame_new++;
-                        
-                        // Advance read cursor: we want to map `needed_new_output_samples` to `available_new_samples_in_segment`
-                        // This is equivalent to resampling `available_new_samples_in_segment` to `needed_new_output_samples`
-                        if (needed_new_output_samples > 0) { // Avoid division by zero if somehow needed_new_output_samples became 0
-                           new_sample_read_cursor += (double)available_new_samples_in_segment / (double)needed_new_output_samples;
-                        } else {
-                            // Should not happen if needed_new_output_samples > 0 is checked before the loop
-                            // but as a safeguard:
-                            new_sample_read_cursor += 1.0; 
-                        }
-                    } else {
-                        break; // Output buffer full
-                    }
-                }
-            }
         }
         
-        // If fewer than H_s_eff samples were written (e.g. output buffer became full mid-frame)
-        // then the loop condition `output_samples_written + H_s_eff <= max_output_samples` will handle breaking.
-
-        // Update the output_overlap_add_buffer with the tail of the current *windowed* synthesis segment
-        // This is N_o samples from current_synthesis_segment[N-N_o] to current_synthesis_segment[N-1]
-        // which is current_synthesis_segment[H_a] to current_synthesis_segment[N-1]
-        for (int i = 0; i < N_o; ++i) {
-            state->output_overlap_add_buffer[i] = state->current_synthesis_segment[H_a + i];
+        // Update the output_overlap_add_buffer with the tail (second half) of the current *windowed* synthesis segment
+        // This is N_o samples from current_synthesis_segment[N_o] to current_synthesis_segment[N-1]
+        if (N_o > 0) { // Ensure N_o is positive, which it should be if N > 0
+             memcpy(state->output_overlap_add_buffer, state->current_synthesis_segment + N_o, N_o * sizeof(short));
         }
 
         // Update input stream pointers
