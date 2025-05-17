@@ -83,6 +83,14 @@ const double PLAYBACK_SPEED_FACTORS[] = {0.5, 1.0, 1.5, 2.0};
 const int NUM_SPEED_LEVELS = sizeof(PLAYBACK_SPEED_FACTORS) / sizeof(PLAYBACK_SPEED_FACTORS[0]);
 int current_speed_idx = 1; // Index for 1.0x speed
 
+// --- Speed Control Method Flag ---
+// Flag to determine which speed control method to use
+// true: Use WSOLA (pitch-preserving)
+// false: Use simple seek-based speed control (changes pitch)
+bool use_wsola_for_speed_control = true;
+// For simple speed control (when use_wsola_for_speed_control is false)
+const int SIMPLE_SPEED_SEEK_AMOUNTS[] = {SPEED_FACTOR_05X, SPEED_FACTOR_10X, SPEED_FACTOR_15X, SPEED_FACTOR_20X}; // Corresponding to 0.5x, 1.0x, 1.5x, 2.0x
+
 // --- Equalizer Globals ---
 const FIRFilter *EQ_PRESETS[] = {&FIR_NORMAL, &FIR_BASS_BOOST, &FIR_TREBLE_BOOST};
 const int NUM_EQ_PRESETS = sizeof(EQ_PRESETS) / sizeof(EQ_PRESETS[0]);
@@ -448,7 +456,7 @@ int main(int argc, char *argv[]) {
     // Store music file paths provided as non-option arguments
     // We will look for files after all options are processed by getopt
 
-    while ((opt_char = getopt(argc, argv, "m:f:r:d:")) != -1) {
+    while ((opt_char = getopt(argc, argv, "m:f:r:d:s:")) != -1) {
         switch (opt_char) {
             case 'm':
                 // The -m option for a single file is now less relevant if we take multiple files.
@@ -523,6 +531,17 @@ int main(int argc, char *argv[]) {
 				}
 				break;
 			}
+            case 's':{
+                int speed_method = atoi(optarg);
+                if (speed_method == 0){
+                    use_wsola_for_speed_control = false;
+                    printf("Using simple seek-based speed control (changes pitch)\n");
+                } else {
+                    use_wsola_for_speed_control = true;
+                    printf("Using WSOLA pitch-preserving speed control\n");
+                }
+                break;
+            }
             default:
                 exit(EXIT_FAILURE);
         }
@@ -751,14 +770,22 @@ int main(int argc, char *argv[]) {
                     }
                     double new_speed = PLAYBACK_SPEED_FACTORS[current_speed_idx];
                     app_log("INFO", "Playback speed: %.1fx", new_speed);
-                    if (wsola_state) {
-                        wsola_state->current_speed_factor = new_speed;
-                        // Update the synthesis hop samples immediately when speed changes
-                        // For slower speeds (< 1.0), synthesis_hop should be LARGER than analysis_hop
-                        // For faster speeds (> 1.0), synthesis_hop should be SMALLER than analysis_hop
-                        int new_hop = (int)round(wsola_state->analysis_hop_samples / new_speed);
-                        if (new_hop <= 0) new_hop = 1; // Safety check for very high speeds
-                        wsola_state->synthesis_hop_samples = new_hop;
+                    if (use_wsola_for_speed_control) {
+                        if (wsola_state) {
+                            wsola_state->current_speed_factor = new_speed;
+                            // Update the synthesis hop samples immediately when speed changes
+                            // For slower speeds (< 1.0), synthesis_hop should be LARGER than analysis_hop
+                            // For faster speeds (> 1.0), synthesis_hop should be SMALLER than analysis_hop
+                            int new_hop = (int)round(wsola_state->analysis_hop_samples / new_speed);
+                            if (new_hop <= 0) new_hop = 1; // Safety check for very high speeds
+                            wsola_state->synthesis_hop_samples = new_hop;
+                        }
+                    } else {
+                        // Simple seek-based speed control (from Music_App.c)
+                        int seek_amount = SIMPLE_SPEED_SEEK_AMOUNTS[current_speed_idx];
+                        if (seek_amount != 0) {
+                            app_log("INFO", "Simple speed control: applying seek offset %d", seek_amount);
+                        }
                     }
                 }
                 else if (c_in == ']') { // Increase speed
@@ -767,14 +794,22 @@ int main(int argc, char *argv[]) {
                     }
                     double new_speed = PLAYBACK_SPEED_FACTORS[current_speed_idx];
                     app_log("INFO", "Playback speed: %.1fx", new_speed);
-                    if (wsola_state) {
-                        wsola_state->current_speed_factor = new_speed;
-                        // Update the synthesis hop samples immediately when speed changes
-                        // For slower speeds (< 1.0), synthesis_hop should be LARGER than analysis_hop
-                        // For faster speeds (> 1.0), synthesis_hop should be SMALLER than analysis_hop
-                        int new_hop = (int)round(wsola_state->analysis_hop_samples / new_speed);
-                        if (new_hop <= 0) new_hop = 1; // Safety check for very high speeds
-                        wsola_state->synthesis_hop_samples = new_hop;
+                    if (use_wsola_for_speed_control) {
+                        if (wsola_state) {
+                            wsola_state->current_speed_factor = new_speed;
+                            // Update the synthesis hop samples immediately when speed changes
+                            // For slower speeds (< 1.0), synthesis_hop should be LARGER than analysis_hop
+                            // For faster speeds (> 1.0), synthesis_hop should be SMALLER than analysis_hop
+                            int new_hop = (int)round(wsola_state->analysis_hop_samples / new_speed);
+                            if (new_hop <= 0) new_hop = 1; // Safety check for very high speeds
+                            wsola_state->synthesis_hop_samples = new_hop;
+                        }
+                    } else {
+                        // Simple seek-based speed control (from Music_App.c)
+                        int seek_amount = SIMPLE_SPEED_SEEK_AMOUNTS[current_speed_idx];
+                        if (seek_amount != 0) {
+                            app_log("INFO", "Simple speed control: applying seek offset %d", seek_amount);
+                        }
                     }
                 }
                 else if (c_in >= '1' && c_in <= '0' + NUM_EQ_PRESETS) {
@@ -796,6 +831,27 @@ int main(int argc, char *argv[]) {
         if (playback_paused) {
             usleep(100000); // Sleep for 100ms to reduce CPU usage while paused
             continue;       // Skip reading and writing audio data
+        }
+
+        // Simple speed control implementation
+        if (!use_wsola_for_speed_control) {
+            // Apply seek-based speed control
+            int seek_amount = SIMPLE_SPEED_SEEK_AMOUNTS[current_speed_idx];
+            if (seek_amount != 0) {
+                if (fseek(fp, seek_amount, SEEK_CUR) != 0) {
+                    if (seek_amount < 0) {
+                        // If seeking backward fails (likely at the start of file)
+                        long current_position = ftell(fp);
+                        if (current_position + seek_amount < sizeof(struct WAV_HEADER)) {
+                            // Prevent seeking before header
+                            fseek(fp, sizeof(struct WAV_HEADER), SEEK_SET);
+                            app_log("DEBUG", "Simple speed: Prevented seeking before WAV header.");
+                        }
+                    } else {
+                        app_log("WARNING", "Simple speed: Seek failed for amount %d.", seek_amount);
+                    }
+                }
+            }
         }
 
         read_ret = fread(buff, 1, buffer_size, fp);
@@ -867,10 +923,12 @@ int main(int argc, char *argv[]) {
 
         // --- WSOLA / Speed Change Logic --- 
         // WSOLA is used when:
-        // 1. The WSOLA state exists (initialized successfully)
-        // 2. Format is S16_LE mono (supported format)
-        // 3. Speed is not 1.0x (no need to process for normal speed)
-        bool use_wsola = (wsola_state != NULL && 
+        // 1. use_wsola_for_speed_control is true
+        // 2. The WSOLA state exists (initialized successfully)
+        // 3. Format is S16_LE mono (supported format)
+        // 4. Speed is not 1.0x (no need to process for normal speed)
+        bool use_wsola = (use_wsola_for_speed_control && 
+                         wsola_state != NULL && 
                          pcm_format == SND_PCM_FORMAT_S16_LE && 
                          wav_header.num_channels == 1 &&
                          fabs(current_speed - 1.0) >= 1e-6);

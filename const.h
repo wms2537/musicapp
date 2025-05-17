@@ -195,3 +195,13 @@ typedef struct {
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #endif
 
+// --- Simple Speed Control Definitions ---
+// Defines for simple seek-based speed control method (based on Music_App.c approach)
+// These values represent file position adjustment amounts for different speeds
+// Negative values slow down playback, positive values speed it up
+// The larger the absolute value, the greater the speed effect
+#define SPEED_FACTOR_05X -5000  // Half speed (0.5x)
+#define SPEED_FACTOR_10X 0      // Normal speed (1.0x)
+#define SPEED_FACTOR_15X 5000   // One and half speed (1.5x)
+#define SPEED_FACTOR_20X 10000  // Double speed (2.0x)
+

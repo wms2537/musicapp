@@ -15,13 +15,18 @@ This is a command-line WAV audio player for Linux using ALSA for playback and vo
 *   Auto-plays next track in the playlist.
 *   Playback speed selection and control ('[' to decrease, ']' to increase speed between 0.5x, 1.0x, 1.5x, 2.0x).
     *   Uses WSOLA (Waveform Similarity Overlap-Add) for pitch-preserving speed adjustment.
+    *   Optional simple seek-based speed control that changes pitch (similar to Music_App.c implementation).
 *   Selectable output device (on-board speaker vs external via -d option).
 *   Enhanced logging to console (using `app_log` with timestamps and types) and to `music_app.log` file.
 *   Audio Equalizer ( '1' for Normal, '2' for Bass Boost, '3' for Treble Boost).
 
-## Playback Speed with WSOLA
+## Playback Speed Options
 
-The MusicApp implements a time-scale modification technique called WSOLA (Waveform Similarity Overlap-Add) to change playback speed without altering the pitch. This allows for:
+MusicApp provides two methods for controlling playback speed:
+
+### 1. WSOLA (Waveform Similarity Overlap-Add) - Default
+
+The WSOLA method changes playback speed without altering the pitch. This allows for:
 
 * **Slow playback (0.5x)**: Useful for analyzing audio details or transcribing speech/music
 * **Normal playback (1.0x)**: Standard speed
@@ -37,6 +42,22 @@ The WSOLA algorithm:
 Requirements for WSOLA:
 * Currently supports 16-bit PCM mono files only (S16_LE format)
 * Processing intensive - requires real-time buffer processing with floating-point accuracy
+
+### 2. Simple Seek-Based Speed Control
+
+The simple method (based on the Music_App.c implementation) changes playback speed by manipulating the file pointer position:
+
+* **Slow playback (0.5x)**: Moves backward in the file, effectively repeating samples
+* **Normal playback (1.0x)**: Standard playback without seeking
+* **Fast playback (1.5x, 2.0x)**: Skips forward in the file, effectively dropping samples
+
+This approach:
+1. Is computationally simple and efficient (lower CPU usage)
+2. Works with any audio format and number of channels
+3. Changes both speed and pitch (similar to "chipmunk effect" at higher speeds)
+4. May introduce some audio artifacts due to the simple implementation
+
+To use the simple speed control method instead of WSOLA, use the `-s 0` command-line option.
 
 ## Compilation
 
@@ -71,6 +92,9 @@ gcc MusicApp.c -o MusicApp -lasound -lm
 *   `-d <device_code>`: Specify output device.
     *   `0`: Default on-board speaker (may have limited max volume).
     *   `1`: External sound output device (assumes full volume range).
+*   `-s <speed_method>`: Specify playback speed control method.
+    *   `0`: Simple seek-based speed control (changes pitch, lower CPU usage).
+    *   `1`: WSOLA pitch-preserving speed control (default).
 
 If format or rate are not specified, the program attempts to infer them from the WAV header.
 
