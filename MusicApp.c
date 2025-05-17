@@ -80,7 +80,8 @@ int current_speed_idx = 1; // Index for 1.0x speed
 const FIRFilter *EQ_PRESETS[] = {&FIR_NORMAL, &FIR_BASS_BOOST, &FIR_TREBLE_BOOST};
 const int NUM_EQ_PRESETS = sizeof(EQ_PRESETS) / sizeof(EQ_PRESETS[0]);
 int current_eq_idx = 0; // Default to Normal/Flat
-short fir_history[MAX_FIR_TAPS -1]; // Buffer to store previous samples for FIR calculation
+static short fir_history[MAX_FIR_TAPS -1]; // Buffer to store previous samples for FIR calculation
+static int fir_filter_history_idx = 0;    // Index for circular FIR history buffer
 
 // --- WSOLA State Global ---
 WSOLA_State *wsola_state = NULL;
@@ -107,6 +108,7 @@ void initialize_fir_history() {
     for (int i = 0; i < MAX_FIR_TAPS - 1; ++i) {
         fir_history[i] = 0;
     }
+    fir_filter_history_idx = 0; // Reset circular buffer index
 }
 
 // Applies an FIR filter to a block of 16-bit PCM audio samples.
@@ -138,19 +140,22 @@ void apply_fir_filter(short *input_buffer, short *output_buffer, int num_samples
         // Start with the current sample and the first coefficient
         filtered_sample += current_sample * filter->coeffs[0];
 
-        // Then convolve with historical samples
-        for (int j = 1; j < filter->num_taps; ++j) {
-            filtered_sample += fir_history[filter->num_taps - 1 - j] * filter->coeffs[j];
+        // Then convolve with historical samples using circular buffer
+        int history_len = filter->num_taps - 1;
+        if (history_len > 0) {
+            for (int j = 1; j < filter->num_taps; ++j) {
+                // Access history: (current_write_idx - j + history_len) % history_len
+                // fir_filter_history_idx is the current position to write current_sample into.
+                // So, the j-th previous sample (coeffs[j] is for x[n-j]) is at this offset from fir_filter_history_idx.
+                int access_idx = (fir_filter_history_idx - j + history_len) % history_len;
+                filtered_sample += fir_history[access_idx] * filter->coeffs[j];
+            }
         }
 
-        // Update history: Shift history and add current_sample
-        // fir_history stores [y(n-N+1) ... y(n-2) y(n-1)] where N is num_taps
-        // Shift from oldest to newest position before inserting new sample
-        for (int j = 0; j < filter->num_taps - 2; ++j) {
-            fir_history[j] = fir_history[j+1];
-        }
-        if (filter->num_taps > 1) { // Only store history if filter has more than one tap
-            fir_history[filter->num_taps - 2] = current_sample; // Newest historical sample is current_sample
+        // Update history: Store current_sample in circular buffer
+        if (history_len > 0) {
+            fir_history[fir_filter_history_idx] = current_sample;
+            fir_filter_history_idx = (fir_filter_history_idx + 1) % history_len;
         }
 
         // Clamp and store the result
