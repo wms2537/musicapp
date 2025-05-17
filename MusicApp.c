@@ -1307,13 +1307,13 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
     int loop_iterations = 0;
     while (output_samples_written + H_s_eff <= max_output_samples) {
         loop_iterations++;
-        // Condition to check if enough data is available in the ring buffer for a full operation:
+        // app_log("DEBUG", "WSOLA_PROCESS_LOOP_ITER: iter=%d, out_written=%d, H_s_eff=%d", loop_iterations, output_samples_written, H_s_eff); // ADD THIS LOG
+
         long long latest_required_stream_offset = state->next_ideal_input_frame_start_sample_offset + N + state->search_window_samples;
         long long latest_available_stream_offset = state->input_ring_buffer_stream_start_offset + state->input_buffer_content;
 
         if (latest_available_stream_offset < latest_required_stream_offset) {
-            // app_log("DEBUG", "WSOLA_PROCESS_LOOP_BREAK (data): iter=%d, out_written=%d, H_s_eff=%d, max_out=%d. Avail_stream_end=%lld, Req_stream_end=%lld, NextIdealStart=%lld", 
-            //    loop_iterations, output_samples_written, H_s_eff, max_output_samples, latest_available_stream_offset, latest_required_stream_offset, state->next_ideal_input_frame_start_sample_offset);
+            // app_log("DEBUG", "WSOLA_LOOP_BREAK_NO_DATA: iter=%d, avail=%lld, req=%lld", loop_iterations, latest_available_stream_offset, latest_required_stream_offset); // SIMPLIFIED LOG
             break; 
         }
 
