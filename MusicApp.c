@@ -1804,27 +1804,44 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
     int H_s_eff = (int)round((double)H_a / speed);
     
     // Update synthesis_hop_samples to reflect current speed factor
-    state->synthesis_hop_samples = H_s_eff;
+    // state->synthesis_hop_samples = H_s_eff; // This was moved down
     
     // Safety check: ensure we always have a positive hop size, even with extreme speed factors
-    if (H_s_eff <= 0) {
-        H_s_eff = 1; // Ensure progress even at very high speed factors
-        state->synthesis_hop_samples = 1;
-    }
+    // if (H_s_eff <= 0) { // This check is implicitly handled by clamping below
+    //     H_s_eff = 1; 
+    //     state->synthesis_hop_samples = 1;
+    // }
 
-    DBG("WSOLA_PROCESS_ENTRY: num_input=%d, max_output=%d, current_speed=%.2f, H_s_eff=%d, input_content_start=%d", 
-           num_input_samples, max_output_samples, state->current_speed_factor, H_s_eff, state->input_buffer_content);
+    // Clamp H_s_eff so we always have material and don't ask for too much/too little
+    if (H_s_eff > N) {         // N is state->analysis_frame_samples
+        H_s_eff = N;          // Max stretch: one full analysis frame
+        DBG("WSOLA_PROCESS: Clamped H_s_eff to N (%d) for slow speed %.2fx", N, speed);
+    }
+    const int MIN_SYNTHESIS_HOP = N_o + 4; // N_o is state->overlap_samples
+    if (H_s_eff < MIN_SYNTHESIS_HOP) {
+        H_s_eff = MIN_SYNTHESIS_HOP; // Min synthesis: slightly more than overlap
+        DBG("WSOLA_PROCESS: Clamped H_s_eff to MIN_SYNTHESIS_HOP (%d) for fast speed %.2fx", MIN_SYNTHESIS_HOP, speed);
+    }
+    state->synthesis_hop_samples = H_s_eff; // Update state after clamping
+
+    DBG("WSOLA_PROCESS_ENTRY: num_input=%d, max_output=%d, current_speed=%.2f, H_a=%d, H_s_eff_clamped=%d, N=%d, N_o=%d, input_content_start=%d", 
+           num_input_samples, max_output_samples, state->current_speed_factor, H_a, H_s_eff, N, N_o, state->input_buffer_content);
 
     int loop_iterations = 0;
+    // Guard the main output loop: ensure space in output_buffer AND input for the next frame.
+    long long latest_required_stream_offset_for_loop_check; // Declare outside for visibility in condition
+    long long latest_available_stream_offset_for_loop_check;  // Declare outside for visibility in condition
+
     while (output_samples_written + H_s_eff <= max_output_samples) {
         loop_iterations++;
-        app_log("DEBUG", "WSOLA_PROCESS_LOOP_ITER: iter=%d, out_written=%d, H_s_eff=%d", loop_iterations, output_samples_written, H_s_eff); // ADD THIS LOG
+        // app_log("DEBUG", "WSOLA_PROCESS_LOOP_ITER: iter=%d, out_written=%d, H_s_eff=%d", loop_iterations, output_samples_written, H_s_eff); 
 
-        long long latest_required_stream_offset = state->next_ideal_input_frame_start_sample_offset + N + state->search_window_samples;
-        long long latest_available_stream_offset = state->input_ring_buffer_stream_start_offset + state->input_buffer_content;
+        // These are calculated inside the loop to reflect changes to state->next_ideal_input_frame_start_sample_offset
+        latest_required_stream_offset_for_loop_check = state->next_ideal_input_frame_start_sample_offset + N + state->search_window_samples;
+        latest_available_stream_offset_for_loop_check = state->input_ring_buffer_stream_start_offset + state->input_buffer_content;
 
-        if (latest_available_stream_offset < latest_required_stream_offset) {
-            app_log("DEBUG", "WSOLA_LOOP_BREAK_NO_DATA: iter=%d, avail=%lld, req=%lld", loop_iterations, latest_available_stream_offset, latest_required_stream_offset); // SIMPLIFIED LOG
+        if (latest_available_stream_offset_for_loop_check < latest_required_stream_offset_for_loop_check) {
+            DBG("WSOLA_LOOP_BREAK_NO_DATA: iter=%d, avail=%lld, req=%lld. Output written so far: %d", loop_iterations, latest_available_stream_offset_for_loop_check, latest_required_stream_offset_for_loop_check, output_samples_written);
             break; 
         }
 
