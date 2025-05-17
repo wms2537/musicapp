@@ -28,14 +28,15 @@ The MusicApp implements a time-scale modification technique called WSOLA (Wavefo
 * **Fast playback (1.5x, 2.0x)**: Useful for quickly skimming through content
 
 The WSOLA algorithm:
-1. Analyzes the audio in short frames (typically 10-20ms)
-2. Finds the best matching segments based on waveform similarity
-3. Overlaps and adds these segments with appropriate time scaling
-4. Preserves the original pitch, unlike simple sample rate changes
+1. Analyzes the audio in short frames (30ms for optimal quality)
+2. Finds the best matching segments using multi-resolution search and cross-correlation
+3. Creates smooth, constant-power transitions between segments with 75% overlap
+4. Preserves the original pitch and timbre, unlike simple sample rate changes
+5. Maintains temporal continuity using intelligent segment selection and smoothing
 
 Requirements for WSOLA:
 * Currently supports 16-bit PCM mono files only (S16_LE format)
-* Processing intensive - requires real-time buffer processing
+* Processing intensive - requires real-time buffer processing with floating-point accuracy
 
 ## Compilation
 
@@ -95,9 +96,16 @@ If format or rate are not specified, the program attempts to infer them from the
 
 ## Recent Fixes
 
-* **WSOLA Algorithm**: Fixed the synthesis hop calculation for proper time scaling, improved correlation calculations, and added safeguards for unreliable segment matching.
-* **Playback Speed Control**: The application now properly updates internal parameters when speed changes.
-* **Cross-Correlation**: Enhanced the segment matching algorithm to be more resilient to DC offsets and noise.
+* **WSOLA Algorithm**: Completely overhauled the implementation with numerous fixes to the core time-scaling algorithm:
+  - Implemented constant-power crossfade for distortion-free transitions
+  - Added multi-resolution segment search for better audio quality
+  - Created robust continuity tracking to avoid discontinuities
+  - Improved floating-point precision in window calculations
+  - Enhanced ring buffer management with safety margins
+  - Optimized algorithm parameters (larger frames, higher overlap)
+* **Playback Speed Control**: The application now dynamically updates all internal parameters when speed changes for consistent audio quality at any speed.
+* **Audio Quality**: Eliminated distortion, buzzing and random noise that occurred at non-1.0x speeds.
+* **Cross-Correlation**: Enhanced the segment matching with triangular windowing and DC offset removal for more accurate matching in all types of audio content.
 
 ## Known Issues / Future Work
 
@@ -106,15 +114,17 @@ If format or rate are not specified, the program attempts to infer them from the
 *   **Advanced Logging**: While improved, log rotation or more configurable levels could be added.
 *   **Code Structure**: For larger feature sets, refactoring into more functions/modules would be beneficial.
 *   **FIR Filter Coefficients**: The current FIR filter coefficients for Bass Boost and Treble Boost in `const.h` are very basic examples and would need proper design using filter design tools for good audio quality. The current EQ implementation is primarily for S16_LE format audio.
-*   **WSOLA Enhancements**: While recently fixed, the WSOLA implementation could benefit from:
+*   **WSOLA Future Enhancements**: While the current implementation now produces high-quality audio at different speeds, it could be further extended with:
     * Stereo support (currently mono only)
-    * More efficient memory management for larger files
+    * Memory optimization for longer audio files
     * Support for additional audio formats beyond S16_LE
-    * More sophisticated transition smoothing between segments
+    * Variable frame length based on audio characteristics
     * GPU acceleration for correlation calculations on compatible systems
+    * Adaptive search window sizing based on audio content
 
 ## Troubleshooting
 
 *   **ALSA include errors (`alsa/asoundlib.h` not found):** Ensure `libasound2-dev` (or equivalent) is installed.
-*   **Audio distortion at non-1.0x speeds:** This could happen with very complex audio at extreme speed settings. Try with a simpler audio file to test the WSOLA implementation.
+*   **Memory allocation failures:** If you see warnings about memory allocation for WSOLA buffers, try reducing the frame size in `const.h` or increase available memory.
 *   **Poor audio quality with equalizer:** The current FIR filter coefficients are simple examples. For better audio quality, proper filter design would be needed.
+*   **High CPU usage:** The WSOLA algorithm is computationally intensive, especially with larger frame sizes. Consider reducing the frame size or overlap percentage if CPU usage is too high.

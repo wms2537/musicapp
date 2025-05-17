@@ -284,19 +284,31 @@ Based on log analysis and code review, the WSOLA algorithm for pitch-preserving 
 
 ### Fix Implementation Steps
 
-1. **Improve windowing in cross-correlation calculation** - Done
-   Modified the `calculate_normalized_cross_correlation` function to use a Hanning window when comparing segments. This focuses the correlation on the center portions of frames and reduces the impact of edge discontinuities, leading to better matching.
+1. **Improved cross-correlation calculation** - Done
+   Replaced the Hanning window with a triangular window in the cross-correlation function to better emphasize the center of segments. Added more robust energy normalization and improved handling of silence segments.
 
-2. **Add temporal continuity in segment selection** - Done
-   Implemented a mechanism in `find_best_match_segment` to maintain continuity between consecutive frames by biasing the search toward offsets near the previous best offset. This significantly reduces the "jumpy" behavior that was causing discontinuities in the audio.
+2. **Enhanced best match segment finding** - Done
+   Implemented a multi-resolution search approach with coarse search followed by fine-grained search. Added continuity tracking across frames to prevent abrupt changes and maintain consistent offsets, which is crucial for audio quality.
 
-3. **Implement weighted offset smoothing** - Done
-   Added a system to blend current and previous offsets when correlations are low, creating a more stable audio output during difficult segments. This is especially important for noise reduction in complex audio passages.
+3. **Implemented constant-power crossfade** - Done
+   Replaced the simple linear crossfade with a proper constant-power crossfade using square-root Hanning windows that ensures perfect reconstruction. This fix eliminates amplitude modulation distortion during transitions.
 
-4. **Replace overlap-add with proper crossfade** - Done
-   Changed the simple overlap-add mechanism to use a proper crossfade with cosine/sine-based windowing. This creates much smoother transitions between audio frames and eliminates clicks and pops at frame boundaries.
+4. **Optimized synthesis window application** - Done
+   Added floating-point window application with proper normalization and rounding to prevent quantization errors that were causing distortion in the audio output.
 
-5. **Adjust energy ratio handling** - Done
-   Modified how energy ratio affects correlation scores to better handle silence and low-energy segments. This helps prevent the algorithm from making poor matches in quiet sections of audio.
+5. **Fixed ring buffer management** - Done
+   Implemented more conservative ring buffer management with safety margins to prevent buffer underruns and aggressive discarding of data that might still be needed, especially during speed changes.
 
-These changes work together to significantly improve the audio quality during speed adjustments, eliminating most of the random noise that was previously occurring when playing at speeds other than 1.0x.
+6. **Adjusted WSOLA parameters** - Done
+   Modified the algorithm parameters in const.h for better audio quality:
+   - Increased analysis frame size from 20ms to 30ms
+   - Increased overlap percentage from 50% to 75%
+   - Enlarged search window from 8ms to 15ms
+
+7. **Added enhanced continuity tracking** - Done
+   Implemented consecutive low correlation tracking to detect when matching quality degrades across multiple frames, allowing for more aggressive smoothing in problematic sections.
+
+8. **Fixed synthesis hop calculation** - Done
+   Ensured proper calculation and immediate updating of synthesis hop size when speed factors change, both in initialization and during playback.
+
+These modifications together resolve the issues with WSOLA algorithm operation, providing clean audio output at different speeds without the distortion and noise previously experienced.

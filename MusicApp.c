@@ -1094,8 +1094,7 @@ static float calculate_normalized_cross_correlation(const short *segment1, const
     double sum_s1_sq = 0.0;
     double sum_s2_sq = 0.0;
 
-    // For audio waveforms, zero-mean correlation (mean subtraction) often works better
-    // as it removes DC offset and focuses on waveform shape
+    // Zero-mean correlation is crucial for audio to remove DC offset influences
     double mean1 = 0.0, mean2 = 0.0;
     for (int i = 0; i < length; ++i) {
         mean1 += segment1[i];
@@ -1104,63 +1103,51 @@ static float calculate_normalized_cross_correlation(const short *segment1, const
     mean1 /= length;
     mean2 /= length;
 
-    // Apply Hanning window to increase focus on the center of the segment
-    // and reduce edge effects during cross-correlation calculation
-    float *window = (float *)malloc(length * sizeof(float));
-    if (window) {
-        // Generate Hanning window
-        for (int i = 0; i < length; ++i) {
-            window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (float)(length - 1)));
-        }
+    // Create a triangular window emphasizing the center
+    // Unlike Hanning, this gives maximum weight to the center and less to the edges
+    // which is more appropriate for correlation matching
+    for (int i = 0; i < length; ++i) {
+        // Create triangular window weight (peak in center)
+        double window_weight = 1.0 - fabs(2.0 * (double)i / length - 1.0);
         
-        // Apply window and calculate correlation
-        for (int i = 0; i < length; ++i) {
-            // Mean-centered and windowed values
-            double s1 = (segment1[i] - mean1) * window[i];
-            double s2 = (segment2[i] - mean2) * window[i];
-            
-            // Add products to sums for correlation calculation
-            sum_s1s2 += s1 * s2;
-            sum_s1_sq += s1 * s1;
-            sum_s2_sq += s2 * s2;
-        }
-        free(window);
-    } else {
-        // Fallback if window allocation fails: use non-windowed calculation
-        for (int i = 0; i < length; ++i) {
-            double s1 = segment1[i] - mean1;
-            double s2 = segment2[i] - mean2;
-            sum_s1s2 += s1 * s2;
-            sum_s1_sq += s1 * s1;
-            sum_s2_sq += s2 * s2;
-        }
+        // Apply window to mean-centered samples
+        double s1 = (segment1[i] - mean1) * window_weight;
+        double s2 = (segment2[i] - mean2) * window_weight;
+        
+        // Calculate correlation components
+        sum_s1s2 += s1 * s2;
+        sum_s1_sq += s1 * s1;
+        sum_s2_sq += s2 * s2;
     }
 
-    // Check for near-zero energy segments (like silence)
-    if (sum_s1_sq < 1.0e-9 || sum_s2_sq < 1.0e-9) {
-        return 0.0f; // No meaningful correlation for very low energy
+    // Silence or very low energy detection
+    // Using more aggressive threshold specifically for audio
+    if (sum_s1_sq < 100.0 || sum_s2_sq < 100.0) {
+        DBG("NCC: Very low energy detected (%f, %f), returning 0", sum_s1_sq, sum_s2_sq);
+        return 0.0f;
     }
 
     double denominator = sqrt(sum_s1_sq) * sqrt(sum_s2_sq);
     if (denominator < 1.0e-9) {
-        return 0.0f; // Avoid division by near-zero
+        return 0.0f;
     }
     
     double correlation = sum_s1s2 / denominator;
     
-    // Ensure correlation is in valid range [-1,1] (handle float precision issues)
+    // Clamp to valid range
     if (correlation > 1.0) correlation = 1.0;
     if (correlation < -1.0) correlation = -1.0;
     
-    // For predominantly silence sections, correlation might be mathematically high
-    // but not perceptually meaningful. We can further adjust for audio-specific needs:
+    // Energy balancing: Apply stronger penalty for energy imbalance
+    // This is especially important for audio where one segment might be 
+    // much louder than another but still have similar shape
     double energy_ratio = (sum_s1_sq < sum_s2_sq) ? 
-                           sum_s1_sq / sum_s2_sq : 
-                           sum_s2_sq / sum_s1_sq;
+                         sum_s1_sq / sum_s2_sq : 
+                         sum_s2_sq / sum_s1_sq;
     
-    // If energy is very unbalanced, reduce correlation value more aggressively
-    if (energy_ratio < 0.2) {
-        correlation *= energy_ratio * 2.0; // Scale down correlation for unbalanced energy
+    // For severe energy imbalance (one segment much louder than other)
+    if (energy_ratio < 0.3) {
+        correlation *= energy_ratio * 1.5; // More aggressive scaling for WSOLA
     }
     
     return (float)correlation;
@@ -1203,9 +1190,11 @@ static long long find_best_match_segment(
     int N_o = state->overlap_samples;
     int S_w = state->search_window_samples;
     
-    // Maintain state between calls to reduce offset jumps
+    // Static variables to maintain consistency between frames
+    // Important for audio to avoid perceptual discontinuities
     static int previous_best_offset = 0;
     static float previous_correlation = 0.0f;
+    static int consecutive_low_correlations = 0;
     
     // Allocate a temporary buffer for candidate segments from the ring buffer
     short *candidate_segment = (short *)malloc(N_o * sizeof(short));
@@ -1215,128 +1204,153 @@ static long long find_best_match_segment(
         return -1e18; // Error
     }
 
-    // Initialize with a very low correlation value (since we want to maximize)
+    // Initialize correlation to very low value
+    float max_correlation_float = -1.0f;
     long long max_correlation = -LLONG_MAX;
-    *best_segment_start_offset_from_ideal_center_ptr = 0; // Default to no offset (ideal center)
+    *best_segment_start_offset_from_ideal_center_ptr = 0; // Default to no offset
     bool match_found = false;
 
-    if (S_w <= 0) { // No search window, or invalid search window
-        // No search window, just check the ideal_search_center_ring_idx
+    // For first frames (startup case), use a more relaxed approach
+    if (state->total_output_samples_generated == 0) {
+        // First frame - check only 0 offset (traditional phase vocoder approach for start)
         if (get_segment_from_ring_buffer(state, ideal_search_center_ring_idx, N_o, candidate_segment)) {
-            float ncc_float = calculate_normalized_cross_correlation(target_segment_for_comparison, candidate_segment, N_o);
-            max_correlation = (long long)(ncc_float * 1000000.0f); // Scale float NCC to long long
-            *best_segment_start_offset_from_ideal_center_ptr = 0; // Offset is 0 by definition
+            // First frame should always be position 0 for predictability
+            max_correlation_float = 1.0f; // Force max correlation
+            max_correlation = 1000000; // 1.0 scaled
+            *best_segment_start_offset_from_ideal_center_ptr = 0;
             match_found = true;
             previous_best_offset = 0;
-            previous_correlation = ncc_float;
-        } else {
-            app_log("WARNING", "find_best_match: (No search window) Could not get segment at ideal_search_center_ring_idx %d", ideal_search_center_ring_idx);
+            previous_correlation = 1.0f;
         }
-    } else {
-        // Bias the search to favor offsets near the previous best offset for continuity
-        // This adds a bias toward consistent offsets across consecutive frames
-        int search_min = -S_w;
-        int search_max = S_w;
+    } 
+    else if (S_w <= 0) {
+        // No search window case - just analyze the ideal position
+        if (get_segment_from_ring_buffer(state, ideal_search_center_ring_idx, N_o, candidate_segment)) {
+            max_correlation_float = calculate_normalized_cross_correlation(
+                target_segment_for_comparison, candidate_segment, N_o);
+            max_correlation = (long long)(max_correlation_float * 1000000.0f);
+            *best_segment_start_offset_from_ideal_center_ptr = 0;
+            match_found = true;
+        } else {
+            app_log("WARNING", "find_best_match: Could not get segment at ideal_search_center_ring_idx %d", 
+                   ideal_search_center_ring_idx);
+        }
+    } 
+    else {
+        // Full search with a multi-resolution approach - first coarse search, then fine-grained
         
-        // Define a smaller primary search range around previous offset
-        int primary_search_min = MAX(search_min, previous_best_offset - (S_w/3));
-        int primary_search_max = MIN(search_max, previous_best_offset + (S_w/3));
+        // Step 1: Coarse search with larger steps to find approximate best region
+        int step_size = MAX(1, S_w / 8); // Start with larger steps, but at least 1
+        int coarse_best_offset = 0;
+        float coarse_max_correlation = -1.0f;
         
-        // First search within the primary range (near previous offset)
-        for (int offset = primary_search_min; offset <= primary_search_max; ++offset) {
-            int current_candidate_start_ring_idx = (ideal_search_center_ring_idx + offset + state->input_buffer_capacity) % state->input_buffer_capacity;
+        for (int offset = -S_w; offset <= S_w; offset += step_size) {
+            int candidate_idx = (ideal_search_center_ring_idx + offset + state->input_buffer_capacity) 
+                              % state->input_buffer_capacity;
             
-            if (!get_segment_from_ring_buffer(state, current_candidate_start_ring_idx, N_o, candidate_segment)) {
-                continue; // Skip this candidate
+            if (!get_segment_from_ring_buffer(state, candidate_idx, N_o, candidate_segment)) {
+                continue;
             }
-
-            float current_ncc_float = calculate_normalized_cross_correlation(target_segment_for_comparison, candidate_segment, N_o);
             
-            // Add a continuity bias for offsets close to previous best offset
-            float continuity_bias = 0.05f * (1.0f - fabsf(offset - previous_best_offset) / (float)S_w);
-            current_ncc_float += continuity_bias;
+            float corr = calculate_normalized_cross_correlation(
+                target_segment_for_comparison, candidate_segment, N_o);
+                
+            // Apply a small bias for positions closer to previous best
+            float continuity_bias = 0.05f * (1.0f - fabsf((float)(offset - previous_best_offset) / S_w));
+            corr += continuity_bias;
+            if (corr > 1.0f) corr = 1.0f;
             
-            // Ensure correlation is in valid range after adding bias
-            if (current_ncc_float > 1.0f) current_ncc_float = 1.0f;
-            
-            long long current_correlation = (long long)(current_ncc_float * 1000000.0f); // Scale float NCC to long long
-
-            if (current_correlation > max_correlation) {
-                max_correlation = current_correlation;
-                *best_segment_start_offset_from_ideal_center_ptr = offset;
+            if (corr > coarse_max_correlation) {
+                coarse_max_correlation = corr;
+                coarse_best_offset = offset;
                 match_found = true;
             }
         }
         
-        // Only if we don't find a good match in the primary range, search the full range
-        if (!match_found || (float)max_correlation / 1000000.0f < 0.3f) {
-            for (int offset = search_min; offset <= search_max; ++offset) {
-                // Skip offsets we already searched in the primary range
-                if (offset >= primary_search_min && offset <= primary_search_max) {
+        // Step 2: Fine search around the best coarse offset
+        if (match_found) {
+            int fine_search_min = MAX(-S_w, coarse_best_offset - 2 * step_size);
+            int fine_search_max = MIN(S_w, coarse_best_offset + 2 * step_size);
+            
+            for (int offset = fine_search_min; offset <= fine_search_max; offset++) {
+                // Skip offsets we already checked in the coarse step
+                if (step_size > 1 && (offset % step_size) == 0 && 
+                    offset >= -S_w && offset <= S_w) {
                     continue;
                 }
                 
-                int current_candidate_start_ring_idx = (ideal_search_center_ring_idx + offset + state->input_buffer_capacity) % state->input_buffer_capacity;
+                int candidate_idx = (ideal_search_center_ring_idx + offset + state->input_buffer_capacity) 
+                                  % state->input_buffer_capacity;
                 
-                if (!get_segment_from_ring_buffer(state, current_candidate_start_ring_idx, N_o, candidate_segment)) {
-                    continue; // Skip this candidate
+                if (!get_segment_from_ring_buffer(state, candidate_idx, N_o, candidate_segment)) {
+                    continue;
                 }
-
-                float current_ncc_float = calculate_normalized_cross_correlation(target_segment_for_comparison, candidate_segment, N_o);
                 
-                // Still apply a smaller continuity bias even in the full search
-                float continuity_bias = 0.03f * (1.0f - fabsf(offset - previous_best_offset) / (float)S_w);
-                current_ncc_float += continuity_bias;
+                float corr = calculate_normalized_cross_correlation(
+                    target_segment_for_comparison, candidate_segment, N_o);
+                    
+                // Smaller bias for fine search
+                float continuity_bias = 0.02f * (1.0f - fabsf((float)(offset - previous_best_offset) / S_w));
+                corr += continuity_bias;
+                if (corr > 1.0f) corr = 1.0f;
                 
-                // Ensure correlation is in valid range after adding bias
-                if (current_ncc_float > 1.0f) current_ncc_float = 1.0f;
-                
-                long long current_correlation = (long long)(current_ncc_float * 1000000.0f); // Scale float NCC to long long
-
-                if (current_correlation > max_correlation) {
-                    max_correlation = current_correlation;
+                if (corr > max_correlation_float) {
+                    max_correlation_float = corr;
                     *best_segment_start_offset_from_ideal_center_ptr = offset;
-                    match_found = true;
                 }
             }
+            
+            // Update max_correlation based on the best fine search result
+            max_correlation = (long long)(max_correlation_float * 1000000.0f);
         }
     }
 
     free(candidate_segment);
 
     if (!match_found) {
-        app_log("WARNING", "find_best_match: No valid segment found in search window. Ideal center idx: %d, S_w: %d", ideal_search_center_ring_idx, S_w);
-        // Use previous offset for continuity if available
+        app_log("WARNING", "find_best_match: No valid segment found. Using previous offset %d", previous_best_offset);
         *best_segment_start_offset_from_ideal_center_ptr = previous_best_offset;
+        // Increase consecutive low correlation counter for stability tracking
+        consecutive_low_correlations++;
+    } else {
+        // Reset counter if we found a reasonable match
+        consecutive_low_correlations = (max_correlation_float < 0.4f) ? 
+                                      consecutive_low_correlations + 1 : 0;
     }
     
-    // Log best match details - useful for debugging
-    float ncc_float = (float)max_correlation / 1000000.0f;
-    DBG("find_best_match: Best offset = %d, Max Corr (scaled) = %lld, NCC_float = %.4f", 
-            *best_segment_start_offset_from_ideal_center_ptr, max_correlation, ncc_float);
-    
-    // If the correlation is very low, use a weighted average with the previous offset
-    // to maintain consistency and prevent jumpy behavior
-    if (ncc_float < 0.3f) {
-        // Use weighted blend of current offset and previous offset
-        int smoothed_offset;
-        if (ncc_float < 0.15f) {
-            // For very low correlations, heavily weight previous offset
-            smoothed_offset = (int)(0.8f * previous_best_offset + 0.2f * (*best_segment_start_offset_from_ideal_center_ptr));
+    // Low correlation management - extremely important for audio quality
+    if (max_correlation_float < 0.4f || consecutive_low_correlations > 2) {
+        // Apply more aggressive smoothing/blending with previous offset when correlations are low
+        int preferred_offset;
+        
+        if (max_correlation_float < 0.2f || consecutive_low_correlations > 4) {
+            // For very poor matches, strongly favor previous offset
+            preferred_offset = (int)(0.9f * previous_best_offset + 
+                                   0.1f * (*best_segment_start_offset_from_ideal_center_ptr));
+            DBG("find_best_match: Very low correlation (%.4f). Strong smoothing: %d -> %d", 
+                max_correlation_float, *best_segment_start_offset_from_ideal_center_ptr, preferred_offset);
         } else {
-            // For moderate correlations, more balanced weighting
-            smoothed_offset = (int)(0.5f * previous_best_offset + 0.5f * (*best_segment_start_offset_from_ideal_center_ptr));
+            // Moderate smoothing for moderate correlation issues
+            preferred_offset = (int)(0.7f * previous_best_offset + 
+                                   0.3f * (*best_segment_start_offset_from_ideal_center_ptr));
+            DBG("find_best_match: Low correlation (%.4f). Moderate smoothing: %d -> %d", 
+                max_correlation_float, *best_segment_start_offset_from_ideal_center_ptr, preferred_offset);
         }
         
-        DBG("find_best_match: Correlation too low (%.4f). Smoothing offset from %d to %d.", 
-            ncc_float, *best_segment_start_offset_from_ideal_center_ptr, smoothed_offset);
+        // Clamp to search window boundaries
+        if (preferred_offset < -S_w) preferred_offset = -S_w;
+        if (preferred_offset > S_w) preferred_offset = S_w;
         
-        *best_segment_start_offset_from_ideal_center_ptr = smoothed_offset;
+        *best_segment_start_offset_from_ideal_center_ptr = preferred_offset;
     }
     
-    // Update state for next call
+    // Debug output for tracking
+    DBG("find_best_match: Final offset=%d, Correlation=%.4f, ConsecLowCorr=%d", 
+        *best_segment_start_offset_from_ideal_center_ptr, max_correlation_float, consecutive_low_correlations);
+    
+    // Update for next call
     previous_best_offset = *best_segment_start_offset_from_ideal_center_ptr;
-    previous_correlation = ncc_float;
+    previous_correlation = max_correlation_float;
     
     return max_correlation;
 }
@@ -1593,56 +1607,148 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
             break; 
         }
 
-        // Apply Hanning window (Q15)
-        for (int i = 0; i < N; ++i) {
-            long long val_ll = (long long)state->current_synthesis_segment[i] * state->analysis_window_function[i];
-            state->current_synthesis_segment[i] = (short)(val_ll >> 15); // Q15 scaling with bit-shift
-            // double scaled_val_double = (double)val_ll / 32767.0; // analysis_window_function is scaled by 32767
-            // if (scaled_val_double > 32767.0) scaled_val_double = 32767.0;
-            // if (scaled_val_double < -32768.0) scaled_val_double = -32768.0;
-            // state->current_synthesis_segment[i] = (short)round(scaled_val_double);
+        // Apply window function to synthesis segment
+        // The window is crucial for smooth time-domain transitions
+        // Use precisely normalized float calculations to prevent distortion
+        
+        // Either use existing window or create a new optimized window
+        static float *synthesis_window = NULL;
+        static int last_synthesis_window_length = 0;
+        
+        // Only create new window if needed
+        if (synthesis_window == NULL || last_synthesis_window_length != N) {
+            // Free old window if it exists
+            if (synthesis_window) free(synthesis_window);
+            
+            // Allocate new window
+            synthesis_window = (float *)malloc(N * sizeof(float));
+            if (synthesis_window) {
+                last_synthesis_window_length = N;
+                
+                // Generate optimized Hanning window
+                for (int i = 0; i < N; i++) {
+                    // Standard Hanning window formula
+                    synthesis_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (N - 1)));
+                }
+                
+                DBG("WSOLA: Generated new synthesis window, length=%d", N);
+            }
+        }
+        
+        // Apply window using floating-point for better precision
+        if (synthesis_window) {
+            for (int i = 0; i < N; ++i) {
+                // Convert to float, apply window, round back to short
+                float sample = (float)state->current_synthesis_segment[i] * synthesis_window[i];
+                
+                // Round properly to integer and clamp
+                int sample_int = (int)roundf(sample);
+                if (sample_int > 32767) sample_int = 32767;
+                if (sample_int < -32768) sample_int = -32768;
+                
+                state->current_synthesis_segment[i] = (short)sample_int;
+            }
+        } else {
+            // Fallback if window allocation failed - use Q15 window from state
+            // This is less accurate but better than nothing
+            app_log("WARNING", "WSOLA: Using Q15 window fallback due to float window allocation failure");
+            for (int i = 0; i < N; ++i) {
+                long long val_ll = (long long)state->current_synthesis_segment[i] * state->analysis_window_function[i];
+                state->current_synthesis_segment[i] = (short)(val_ll >> 15); // Q15 scaling
+            }
         }
 
         int samples_to_write_this_frame = H_s_eff;
         int samples_written_this_frame_ola = 0;
         int samples_written_this_frame_new = 0;
 
-        // 1. Cross-fade overlap regions using a Hanning window
-        // This creates smoother transitions between frames
-        float *crossfade_window = (float *)malloc(N_o * sizeof(float));
-        if (crossfade_window) {
-            // Generate crossfade window (half of Hanning window for each part)
-            for (int i = 0; i < N_o; ++i) {
-                // Fade-out previous frame (cosine-based)
-                float fade_out = cosf(M_PI * i / (2.0f * N_o));
-                // Fade-in current frame (sine-based)
-                float fade_in = sinf(M_PI * i / (2.0f * N_o));
-                crossfade_window[i] = fade_out;  // Store fade-out weight
+        // 1. Cross-fade overlap regions using a constant-power crossfade
+        // This is critical for WSOLA to prevent amplitude modulation/distortion
+        // Pre-compute the crossfade windows once
+        static float *fade_out = NULL;
+        static float *fade_in = NULL;
+        static int last_fade_length = 0;
+        
+        // Only regenerate windows if fade length has changed
+        if (fade_out == NULL || fade_in == NULL || last_fade_length != N_o) {
+            // Free previous windows if they exist
+            if (fade_out) free(fade_out);
+            if (fade_in) free(fade_in);
+            
+            // Allocate new windows
+            fade_out = (float *)malloc(N_o * sizeof(float));
+            fade_in = (float *)malloc(N_o * sizeof(float));
+            
+            if (fade_out && fade_in) {
+                last_fade_length = N_o;
                 
-                if (output_samples_written < max_output_samples && samples_written_this_frame_ola < samples_to_write_this_frame) {
-                    // Apply crossfade
-                    long long sample = (long long)(state->output_overlap_add_buffer[i] * fade_out) + 
-                                      (long long)(state->current_synthesis_segment[i] * fade_in);
+                // Generate optimal CONSTANT POWER crossfade (critically important for audio)
+                // Square-root Hanning window gives constant power when squared and summed
+                for (int i = 0; i < N_o; ++i) {
+                    // Position in window [0,1]
+                    float pos = (float)i / (float)(N_o - 1);
                     
-                    // Clamp to valid range
-                    if (sample > 32767) sample = 32767;
-                    if (sample < -32768) sample = -32768;
+                    // Create Hanning-based constant power crossfade
+                    fade_out[i] = sqrtf(0.5f * (1.0f + cosf(M_PI * pos))); // Cosine window for fade out
+                    fade_in[i] = sqrtf(0.5f * (1.0f - cosf(M_PI * pos)));  // Sine window for fade in
                     
-                    output_buffer[output_samples_written++] = (short)sample;
+                    // Verify perfect reconstruction - ensure fade_out^2 + fade_in^2 = 1.0
+                    // This is crucial to prevent amplitude modulation during crossfade
+                    float sum_squared = fade_out[i] * fade_out[i] + fade_in[i] * fade_in[i];
+                    
+                    // Normalize for perfect reconstruction if needed
+                    if (fabsf(sum_squared - 1.0f) > 0.0001f) {
+                        float norm_factor = 1.0f / sqrtf(sum_squared);
+                        fade_out[i] *= norm_factor;
+                        fade_in[i] *= norm_factor;
+                    }
+                }
+                
+                DBG("WSOLA: Generated new constant-power crossfade windows, length=%d", N_o);
+            }
+        }
+        
+        // Apply crossfade with proper windows
+        if (fade_out && fade_in) {
+            for (int i = 0; i < N_o; ++i) {
+                if (output_samples_written < max_output_samples && 
+                    samples_written_this_frame_ola < samples_to_write_this_frame) {
+                    
+                    // Apply precise, constant-power crossfade with proper normalization
+                    float sample = (float)state->output_overlap_add_buffer[i] * fade_out[i] + 
+                                  (float)state->current_synthesis_segment[i] * fade_in[i];
+                    
+                    // Convert to integer with proper rounding and clamping
+                    int sample_int = (int)roundf(sample);
+                    if (sample_int > 32767) sample_int = 32767;
+                    if (sample_int < -32768) sample_int = -32768;
+                    
+                    output_buffer[output_samples_written++] = (short)sample_int;
                     samples_written_this_frame_ola++;
                 } else {
-                    break; // Output buffer full or frame's sample quota met
+                    break; // Output buffer full
                 }
             }
-            free(crossfade_window);
         } else {
-            // Fallback to simple overlap-add if window allocation fails
+            // Emergency fallback (should never happen with static allocation)
+            app_log("ERROR", "WSOLA: Failed to allocate crossfade windows. Using emergency fallback.");
             for (int i = 0; i < N_o; ++i) {
-                if (output_samples_written < max_output_samples && samples_written_this_frame_ola < samples_to_write_this_frame) {
-                    long long sum = (long long)state->output_overlap_add_buffer[i] + state->current_synthesis_segment[i];
-                    if (sum > 32767) sum = 32767;
-                    if (sum < -32768) sum = -32768;
-                    output_buffer[output_samples_written++] = (short)sum;
+                if (output_samples_written < max_output_samples && 
+                    samples_written_this_frame_ola < samples_to_write_this_frame) {
+                    // Simplest linear crossfade with more optimal fade curves
+                    float t = (float)i / (float)(N_o - 1);
+                    float fade_out_val = sqrtf(1.0f - t);
+                    float fade_in_val = sqrtf(t);
+                    
+                    float sample = (float)state->output_overlap_add_buffer[i] * fade_out_val + 
+                                  (float)state->current_synthesis_segment[i] * fade_in_val;
+                    
+                    // Convert to short with proper rounding
+                    int sample_int = (int)roundf(sample);
+                    if (sample_int > 32767) sample_int = 32767;
+                    if (sample_int < -32768) sample_int = -32768;
+                    
+                    output_buffer[output_samples_written++] = (short)sample_int;
                     samples_written_this_frame_ola++;
                 } else {
                     break;
@@ -1754,33 +1860,59 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
     app_log("DEBUG", "WSOLA_PROCESS_EXIT: loop_iters=%d, output_written=%d, input_content_end=%d, next_ideal_start=%lld", 
        loop_iterations, output_samples_written, state->input_buffer_content, state->next_ideal_input_frame_start_sample_offset);
 
-    // --- Unconditional Discard Logic --- 
-    // Always try to discard old data after a processing pass, regardless of loop iterations.
-    // This helps `input_ring_buffer_stream_start_offset` catch up with `next_ideal_input_frame_start_sample_offset`.
-    if (state->input_buffer_content > 0) { // Only act if there's content
+    // --- Conservative Ring Buffer Management --- 
+    // Only discard data we're absolutely sure we won't need anymore
+    // Aggressive discarding can cause buffer underruns and audio artifacts
+    if (state->input_buffer_content > 0) {
+        // Keep a larger safety margin around the next search window
+        // This prevents accidental discarding of data we might need
+        // Especially important when changing speeds rapidly
+        const int SAFETY_MARGIN = MAX(state->overlap_samples, state->search_window_samples);
+        
+        // Most conservative approach: 
+        // 1. Keep data needed for next search window
+        // 2. Add overlap samples for matching 
+        // 3. Add safety margin to handle speed changes
         long long min_retainable_abs_offset = state->next_ideal_input_frame_start_sample_offset 
                                             - state->search_window_samples 
-                                            - state->overlap_samples; // Earliest point an N_o segment for correlation could start
+                                            - state->overlap_samples
+                                            - SAFETY_MARGIN;
+                                            
+        // Never discard data before stream position 0
         if (min_retainable_abs_offset < 0) min_retainable_abs_offset = 0;
-
+        
+        // Calculate how many samples can be safely discarded
         int samples_to_discard = (int)(min_retainable_abs_offset - state->input_ring_buffer_stream_start_offset);
         
-        app_log("DEBUG", "WSOLA_POST_DISCARD_CHECK: min_retain_abs=%lld, ring_start_abs=%lld, content_before=%d, samples_to_discard_calc=%d", 
-           min_retainable_abs_offset, state->input_ring_buffer_stream_start_offset, state->input_buffer_content, samples_to_discard);
-
+        // Only log if we're actually discarding something
         if (samples_to_discard > 0) {
-            if (samples_to_discard > state->input_buffer_content) {
-                app_log("WARNING", "WSOLA_POST_DISCARD: Attempting to discard %d, but only %d content. Clamping.", samples_to_discard, state->input_buffer_content);
-                samples_to_discard = state->input_buffer_content;
+            DBG("WSOLA_RING_BUFFER: next_ideal=%lld, min_retain=%lld, content=%d, to_discard=%d", 
+                state->next_ideal_input_frame_start_sample_offset,
+                min_retainable_abs_offset, 
+                state->input_buffer_content,
+                samples_to_discard);
+                
+            // Prevent over-discarding (safety check)
+            if (samples_to_discard > state->input_buffer_content / 2) {
+                // Only discard half of the buffer at most to prevent rapid emptying
+                samples_to_discard = state->input_buffer_content / 2;
+                DBG("WSOLA_RING_BUFFER: Limiting discard to 50%% of buffer: %d samples", samples_to_discard);
             }
-            state->input_buffer_read_pos = (state->input_buffer_read_pos + samples_to_discard) % state->input_buffer_capacity;
-            state->input_buffer_content -= samples_to_discard;
-            state->input_ring_buffer_stream_start_offset += samples_to_discard;
-            app_log("DEBUG", "WSOLA_POST_DISCARD_DONE: discarded=%d, new_ring_start_abs=%lld, new_read_pos=%d, new_content=%d", 
-               samples_to_discard, state->input_ring_buffer_stream_start_offset, state->input_buffer_read_pos, state->input_buffer_content);
+            
+            // Only discard if we have enough samples to make it worthwhile
+            // Prevents excessive small discard operations
+            if (samples_to_discard >= state->analysis_hop_samples / 2) {
+                // Update the buffer position tracking
+                state->input_buffer_read_pos = (state->input_buffer_read_pos + samples_to_discard) % state->input_buffer_capacity;
+                state->input_buffer_content -= samples_to_discard;
+                state->input_ring_buffer_stream_start_offset += samples_to_discard;
+                
+                DBG("WSOLA_RING_BUFFER: Discarded %d samples, buffer now %d/%d full", 
+                    samples_to_discard, state->input_buffer_content, state->input_buffer_capacity);
+            }
         }
     }
-    // --- End Unconditional Discard Logic ---
+    // --- End Conservative Ring Buffer Management ---
 
     // state->total_output_samples_generated += output_samples_written; // Moved this update to after the loop
     state->total_output_samples_generated += output_samples_written; // Ensure this is updated correctly

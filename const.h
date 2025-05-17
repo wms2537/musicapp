@@ -123,10 +123,10 @@ const FIRFilter FIR_TREBLE_BOOST = {
 };
 
 // --- WSOLA (Waveform Similarity Overlap-Add) for Pitch-Preserving Speed Control ---
-#define MAX_ANALYSIS_FRAME_MS 40 // Maximum analysis frame duration in milliseconds
-#define DEFAULT_ANALYSIS_FRAME_MS 20 // Analysis frame size (20ms provides good balance between quality and performance)
-#define DEFAULT_OVERLAP_PERCENTAGE 0.50f // 50% overlap works best with Hanning window (for COLA property)
-#define DEFAULT_SEARCH_WINDOW_MS 8 // Search window size for finding best match segments (8ms offers good trade-off)
+#define MAX_ANALYSIS_FRAME_MS 60 // Maximum analysis frame duration in milliseconds
+#define DEFAULT_ANALYSIS_FRAME_MS 30 // Analysis frame size (30ms provides better audio quality for WSOLA)
+#define DEFAULT_OVERLAP_PERCENTAGE 0.75f // 75% overlap gives smoother transitions for time-varying content
+#define DEFAULT_SEARCH_WINDOW_MS 15 // Larger search window (15ms) for finding better matches at varying speeds
 
 // Maximum possible samples in a frame, e.g., for 48000 Hz and 40ms: 48000 * 40 / 1000 = 1920
 // Let's set a higher bound to be safe, can be refined.
