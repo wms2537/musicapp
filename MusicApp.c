@@ -1457,6 +1457,34 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
     // app_log("DEBUG", "WSOLA_PROCESS_EXIT: loop_iters=%d, output_written=%d, input_content_end=%d, next_ideal_start=%lld", 
     //    loop_iterations, output_samples_written, state->input_buffer_content, state->next_ideal_input_frame_start_sample_offset);
 
+    // --- Unconditional Discard Logic --- 
+    // Always try to discard old data after a processing pass, regardless of loop iterations.
+    // This helps `input_ring_buffer_stream_start_offset` catch up with `next_ideal_input_frame_start_sample_offset`.
+    if (state->input_buffer_content > 0) { // Only act if there's content
+        long long min_retainable_abs_offset = state->next_ideal_input_frame_start_sample_offset 
+                                            - state->search_window_samples 
+                                            - state->overlap_samples; // Earliest point an N_o segment for correlation could start
+        if (min_retainable_abs_offset < 0) min_retainable_abs_offset = 0;
+
+        int samples_to_discard = (int)(min_retainable_abs_offset - state->input_ring_buffer_stream_start_offset);
+        
+        // app_log("DEBUG", "WSOLA_POST_DISCARD_CHECK: min_retain_abs=%lld, ring_start_abs=%lld, content_before=%d, samples_to_discard_calc=%d", 
+        //    min_retainable_abs_offset, state->input_ring_buffer_stream_start_offset, state->input_buffer_content, samples_to_discard);
+
+        if (samples_to_discard > 0) {
+            if (samples_to_discard > state->input_buffer_content) {
+                app_log("WARNING", "WSOLA_POST_DISCARD: Attempting to discard %d, but only %d content. Clamping.", samples_to_discard, state->input_buffer_content);
+                samples_to_discard = state->input_buffer_content;
+            }
+            state->input_buffer_read_pos = (state->input_buffer_read_pos + samples_to_discard) % state->input_buffer_capacity;
+            state->input_buffer_content -= samples_to_discard;
+            state->input_ring_buffer_stream_start_offset += samples_to_discard;
+            // app_log("DEBUG", "WSOLA_POST_DISCARD_DONE: discarded=%d, new_ring_start_abs=%lld, new_read_pos=%d, new_content=%d", 
+            //    samples_to_discard, state->input_ring_buffer_stream_start_offset, state->input_buffer_read_pos, state->input_buffer_content);
+        }
+    }
+    // --- End Unconditional Discard Logic ---
+
     state->total_output_samples_generated += output_samples_written;
     return output_samples_written;
 }
