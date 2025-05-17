@@ -1811,29 +1811,21 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
             if (fade_out && fade_in) {
                 last_fade_length = N_o;
                 
-                // Generate optimal CONSTANT POWER crossfade (critically important for audio)
-                // Square-root Hanning window gives constant power when squared and summed
+                // Generate Complementary Hanning windows (sum to 1)
                 for (int i = 0; i < N_o; ++i) {
                     // Position in window [0,1]
                     float pos = (float)i / (float)(N_o - 1);
                     
-                    // Create Hanning-based constant power crossfade
-                    fade_out[i] = sqrtf(0.5f * (1.0f + cosf(M_PI * pos))); // Cosine window for fade out
-                    fade_in[i] = sqrtf(0.5f * (1.0f - cosf(M_PI * pos)));  // Sine window for fade in
-                    
-                    // Verify perfect reconstruction - ensure fade_out^2 + fade_in^2 = 1.0
-                    // This is crucial to prevent amplitude modulation during crossfade
-                    float sum_squared = fade_out[i] * fade_out[i] + fade_in[i] * fade_in[i];
-                    
-                    // Normalize for perfect reconstruction if needed
-                    if (fabsf(sum_squared - 1.0f) > 0.0001f) {
-                        float norm_factor = 1.0f / sqrtf(sum_squared);
-                        fade_out[i] *= norm_factor;
-                        fade_in[i] *= norm_factor;
-                    }
+                    // Create Complementary Hanning windows (sum to 1)
+                    float c_val = cosf(M_PI * pos);
+                    fade_out[i] = 0.5f * (1.0f + c_val); 
+                    fade_in[i]  = 0.5f * (1.0f - c_val);
+
+                    // The previous normalization for constant power is no longer needed
+                    // as fade_out[i] + fade_in[i] will equal 1.0f.
                 }
                 
-                DBG("WSOLA: Generated new constant-power crossfade windows, length=%d", N_o);
+                DBG("WSOLA: Generated new complementary Hanning crossfade windows, length=%d", N_o);
             }
         }
         
