@@ -749,18 +749,32 @@ int main(int argc, char *argv[]) {
                     if (current_speed_idx > 0) {
                         current_speed_idx--;
                     }
-                    app_log("INFO", "Playback speed: %.1fx", PLAYBACK_SPEED_FACTORS[current_speed_idx]);
+                    double new_speed = PLAYBACK_SPEED_FACTORS[current_speed_idx];
+                    app_log("INFO", "Playback speed: %.1fx", new_speed);
                     if (wsola_state) {
-                        wsola_state->current_speed_factor = PLAYBACK_SPEED_FACTORS[current_speed_idx];
+                        wsola_state->current_speed_factor = new_speed;
+                        // Update the synthesis hop samples immediately when speed changes
+                        // For slower speeds (< 1.0), synthesis_hop should be LARGER than analysis_hop
+                        // For faster speeds (> 1.0), synthesis_hop should be SMALLER than analysis_hop
+                        int new_hop = (int)round(wsola_state->analysis_hop_samples / new_speed);
+                        if (new_hop <= 0) new_hop = 1; // Safety check for very high speeds
+                        wsola_state->synthesis_hop_samples = new_hop;
                     }
                 }
                 else if (c_in == ']') { // Increase speed
                     if (current_speed_idx < NUM_SPEED_LEVELS - 1) {
                         current_speed_idx++;
                     }
-                    app_log("INFO", "Playback speed: %.1fx", PLAYBACK_SPEED_FACTORS[current_speed_idx]);
+                    double new_speed = PLAYBACK_SPEED_FACTORS[current_speed_idx];
+                    app_log("INFO", "Playback speed: %.1fx", new_speed);
                     if (wsola_state) {
-                        wsola_state->current_speed_factor = PLAYBACK_SPEED_FACTORS[current_speed_idx];
+                        wsola_state->current_speed_factor = new_speed;
+                        // Update the synthesis hop samples immediately when speed changes
+                        // For slower speeds (< 1.0), synthesis_hop should be LARGER than analysis_hop
+                        // For faster speeds (> 1.0), synthesis_hop should be SMALLER than analysis_hop
+                        int new_hop = (int)round(wsola_state->analysis_hop_samples / new_speed);
+                        if (new_hop <= 0) new_hop = 1; // Safety check for very high speeds
+                        wsola_state->synthesis_hop_samples = new_hop;
                     }
                 }
                 else if (c_in >= '1' && c_in <= '0' + NUM_EQ_PRESETS) {
@@ -852,11 +866,14 @@ int main(int argc, char *argv[]) {
         int num_source_samples_for_speed_change = num_samples_in_buff;
 
         // --- WSOLA / Speed Change Logic --- 
-        // WSOLA is used if state exists, format is S16_LE mono, AND speed is NOT 1.0x
+        // WSOLA is used when:
+        // 1. The WSOLA state exists (initialized successfully)
+        // 2. Format is S16_LE mono (supported format)
+        // 3. Speed is not 1.0x (no need to process for normal speed)
         bool use_wsola = (wsola_state != NULL && 
-                          pcm_format == SND_PCM_FORMAT_S16_LE && 
-                          wav_header.num_channels == 1 &&
-                          fabs(current_speed - 1.0) >= 1e-6); // Only use WSOLA if speed is not 1.0x
+                         pcm_format == SND_PCM_FORMAT_S16_LE && 
+                         wav_header.num_channels == 1 &&
+                         fabs(current_speed - 1.0) >= 1e-6);
 
         if (use_wsola) {
             DBG("MainLoop: Using WSOLA for speed %.2fx", current_speed);
@@ -1072,31 +1089,63 @@ static float calculate_normalized_cross_correlation(const short *segment1, const
         return 0.0f; 
     }
 
-    long long sum_s1s2 = 0;
-    long long sum_s1_sq = 0;
-    long long sum_s2_sq = 0;
+    // Use double precision for better accuracy
+    double sum_s1s2 = 0.0;
+    double sum_s1_sq = 0.0;
+    double sum_s2_sq = 0.0;
 
+    // For audio waveforms, zero-mean correlation (mean subtraction) often works better
+    // as it removes DC offset and focuses on waveform shape
+    double mean1 = 0.0, mean2 = 0.0;
     for (int i = 0; i < length; ++i) {
-        short s1 = segment1[i];
-        short s2 = segment2[i];
-        sum_s1s2 += (long long)s1 * s2;
-        sum_s1_sq += (long long)s1 * s1;
-        sum_s2_sq += (long long)s2 * s2;
+        mean1 += segment1[i];
+        mean2 += segment2[i];
+    }
+    mean1 /= length;
+    mean2 /= length;
+
+    // Apply a simple pre-emphasis filter to emphasize higher frequencies
+    // This can improve matching in voiced speech/music by reducing the impact of
+    // low frequency components which can dominate correlation
+    for (int i = 0; i < length; ++i) {
+        // Mean-centered values
+        double s1 = segment1[i] - mean1;
+        double s2 = segment2[i] - mean2;
+        
+        // Add products to sums for correlation calculation
+        sum_s1s2 += s1 * s2;
+        sum_s1_sq += s1 * s1;
+        sum_s2_sq += s2 * s2;
     }
 
-    if (sum_s1_sq == 0 || sum_s2_sq == 0) {
-        // If either segment has zero energy, correlation is typically 0, unless both are zero energy then it can be 1.
-        // For practical purposes in audio, if one is silence, consider correlation 0.
-        // app_log("DEBUG", "NCC: Zero energy in one or both segments. s1_sq=%lld, s2_sq=%lld", sum_s1_sq, sum_s2_sq);
-        return 0.0f;
+    // Check for near-zero energy segments (like silence)
+    if (sum_s1_sq < 1.0e-9 || sum_s2_sq < 1.0e-9) {
+        return 0.0f; // No meaningful correlation for very low energy
     }
 
-    double denominator = sqrt((double)sum_s1_sq) * sqrt((double)sum_s2_sq);
-    if (denominator == 0) { // Should be caught by sum_s1_sq/sum_s2_sq check, but for safety.
-        return 0.0f;
+    double denominator = sqrt(sum_s1_sq) * sqrt(sum_s2_sq);
+    if (denominator < 1.0e-9) {
+        return 0.0f; // Avoid division by near-zero
     }
     
-    return (float)((double)sum_s1s2 / denominator);
+    double correlation = sum_s1s2 / denominator;
+    
+    // Ensure correlation is in valid range [-1,1] (handle float precision issues)
+    if (correlation > 1.0) correlation = 1.0;
+    if (correlation < -1.0) correlation = -1.0;
+    
+    // For predominantly silence sections, correlation might be mathematically high
+    // but not perceptually meaningful. We can further adjust for audio-specific needs:
+    double energy_ratio = (sum_s1_sq < sum_s2_sq) ? 
+                           sum_s1_sq / sum_s2_sq : 
+                           sum_s2_sq / sum_s1_sq;
+    
+    // If energy is very unbalanced, reduce correlation value
+    if (energy_ratio < 0.1) {
+        correlation *= energy_ratio; // Scale down correlation for very unbalanced energy
+    }
+    
+    return (float)correlation;
 }
 
 // Helper function to safely get a segment of 'length' samples starting from
@@ -1205,10 +1254,19 @@ static long long find_best_match_segment(
         // Return the very small number, best_offset already 0
     }
     
-    // app_log("DEBUG", "find_best_match: Best offset = %d, Max Corr = %.4f", *best_segment_start_offset_from_ideal_center_ptr, max_correlation);
-    // Corrected log format for long long max_correlation, and display the original float NCC value for clarity
+    // Log best match details - useful for debugging
+    float ncc_float = (float)max_correlation / 1000000.0f;
     DBG("find_best_match: Best offset = %d, Max Corr (scaled) = %lld, NCC_float = %.4f", 
-            *best_segment_start_offset_from_ideal_center_ptr, max_correlation, (float)max_correlation / 1000000.0f);
+            *best_segment_start_offset_from_ideal_center_ptr, max_correlation, ncc_float);
+    
+    // If the correlation is very low, consider forcing offset to 0
+    // This helps in cases where noise or silence causes unreliable matches
+    if (ncc_float < 0.25f) { // Increased threshold for more reliable matches
+        DBG("find_best_match: Correlation too low (%.4f). Forcing offset to 0 from %d.", 
+            ncc_float, *best_segment_start_offset_from_ideal_center_ptr);
+        *best_segment_start_offset_from_ideal_center_ptr = 0;
+    }
+    
     return max_correlation;
 }
 
@@ -1255,9 +1313,12 @@ bool wsola_init(WSOLA_State **state_ptr, int sample_rate_arg, int num_channels_a
     s->analysis_frame_samples = (s->sample_rate * analysis_frame_ms_arg) / 1000;
     s->overlap_samples = (int)(s->analysis_frame_samples * overlap_percentage_arg);
     s->analysis_hop_samples = s->analysis_frame_samples - s->overlap_samples; // Nominal input hop at 1x speed
-    // Synthesis hop depends on speed factor, calculated during processing, but nominal is same as analysis_hop
-    s->synthesis_hop_samples = s->analysis_hop_samples; // This is the target output advancement for each frame at 1x speed
-                                                       // Effective output hop = analysis_hop_samples / speed_factor
+    
+    // Synthesis hop depends on speed factor and should be adjusted based on playback speed
+    // For slower speeds (< 1.0), synthesis_hop > analysis_hop
+    // For faster speeds (> 1.0), synthesis_hop < analysis_hop
+    int calculated_hop = (int)round(s->analysis_hop_samples / s->current_speed_factor);
+    s->synthesis_hop_samples = (calculated_hop > 0) ? calculated_hop : 1; // Ensure positive hop
 
     s->search_window_samples = (s->sample_rate * search_window_ms_arg) / 1000;
 
@@ -1390,8 +1451,21 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
     int H_a = state->analysis_hop_samples; // Nominal analysis hop = N - N_o
 
     // Effective synthesis hop size (how many output samples we generate per frame)
-    int H_s_eff = (int)round((double)H_a / state->current_speed_factor);
-    if (H_s_eff <= 0) H_s_eff = 1; // Ensure progress even at very high speed factors
+    // This should be updated when speed factor changes
+    // Calculate effective synthesis hop size based on current speed factor
+    // For slow playback (speed < 1.0), we need MORE output samples (H_s_eff > H_a)
+    // For fast playback (speed > 1.0), we need FEWER output samples (H_s_eff < H_a)
+    double speed = state->current_speed_factor;
+    int H_s_eff = (int)round((double)H_a / speed);
+    
+    // Update synthesis_hop_samples to reflect current speed factor
+    state->synthesis_hop_samples = H_s_eff;
+    
+    // Safety check: ensure we always have a positive hop size, even with extreme speed factors
+    if (H_s_eff <= 0) {
+        H_s_eff = 1; // Ensure progress even at very high speed factors
+        state->synthesis_hop_samples = 1;
+    }
 
     DBG("WSOLA_PROCESS_ENTRY: num_input=%d, max_output=%d, current_speed=%.2f, H_s_eff=%d, input_content_start=%d", 
            num_input_samples, max_output_samples, state->current_speed_factor, H_s_eff, state->input_buffer_content);

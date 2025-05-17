@@ -14,10 +14,28 @@ This is a command-line WAV audio player for Linux using ALSA for playback and vo
 *   Previous track (',' key).
 *   Auto-plays next track in the playlist.
 *   Playback speed selection and control ('[' to decrease, ']' to increase speed between 0.5x, 1.0x, 1.5x, 2.0x).
-    *   Currently uses WSOLA (Waveform Similarity Overlap-Add) for pitch-preserving speed adjustment. This feature is undergoing tuning for optimal audio quality and performance.
+    *   Uses WSOLA (Waveform Similarity Overlap-Add) for pitch-preserving speed adjustment.
 *   Selectable output device (on-board speaker vs external via -d option).
 *   Enhanced logging to console (using `app_log` with timestamps and types) and to `music_app.log` file.
 *   Audio Equalizer ( '1' for Normal, '2' for Bass Boost, '3' for Treble Boost).
+
+## Playback Speed with WSOLA
+
+The MusicApp implements a time-scale modification technique called WSOLA (Waveform Similarity Overlap-Add) to change playback speed without altering the pitch. This allows for:
+
+* **Slow playback (0.5x)**: Useful for analyzing audio details or transcribing speech/music
+* **Normal playback (1.0x)**: Standard speed
+* **Fast playback (1.5x, 2.0x)**: Useful for quickly skimming through content
+
+The WSOLA algorithm:
+1. Analyzes the audio in short frames (typically 10-20ms)
+2. Finds the best matching segments based on waveform similarity
+3. Overlaps and adds these segments with appropriate time scaling
+4. Preserves the original pitch, unlike simple sample rate changes
+
+Requirements for WSOLA:
+* Currently supports 16-bit PCM mono files only (S16_LE format)
+* Processing intensive - requires real-time buffer processing
 
 ## Compilation
 
@@ -73,7 +91,13 @@ If format or rate are not specified, the program attempts to infer them from the
 ## Dependencies
 
 *   ALSA library (`libasound`)
-*   Math library (`libm` for `sqrt`, `pow` - though not heavily used currently)
+*   Math library (`libm` for `sqrt`, `pow` functions used in WSOLA and FIR filter)
+
+## Recent Fixes
+
+* **WSOLA Algorithm**: Fixed the synthesis hop calculation for proper time scaling, improved correlation calculations, and added safeguards for unreliable segment matching.
+* **Playback Speed Control**: The application now properly updates internal parameters when speed changes.
+* **Cross-Correlation**: Enhanced the segment matching algorithm to be more resilient to DC offsets and noise.
 
 ## Known Issues / Future Work
 
@@ -82,8 +106,15 @@ If format or rate are not specified, the program attempts to infer them from the
 *   **Advanced Logging**: While improved, log rotation or more configurable levels could be added.
 *   **Code Structure**: For larger feature sets, refactoring into more functions/modules would be beneficial.
 *   **FIR Filter Coefficients**: The current FIR filter coefficients for Bass Boost and Treble Boost in `const.h` are very basic examples and would need proper design using filter design tools for good audio quality. The current EQ implementation is primarily for S16_LE format audio.
-*   **WSOLA Performance/Quality**: The WSOLA implementation for pitch-preserving speed control is computationally intensive. Further optimization or parameter tuning may be needed to balance audio quality and real-time performance across different systems and speed factors.
+*   **WSOLA Enhancements**: While recently fixed, the WSOLA implementation could benefit from:
+    * Stereo support (currently mono only)
+    * More efficient memory management for larger files
+    * Support for additional audio formats beyond S16_LE
+    * More sophisticated transition smoothing between segments
+    * GPU acceleration for correlation calculations on compatible systems
 
 ## Troubleshooting
 
-*   **ALSA include errors (`alsa/asoundlib.h` not found):** Ensure `
+*   **ALSA include errors (`alsa/asoundlib.h` not found):** Ensure `libasound2-dev` (or equivalent) is installed.
+*   **Audio distortion at non-1.0x speeds:** This could happen with very complex audio at extreme speed settings. Try with a simpler audio file to test the WSOLA implementation.
+*   **Poor audio quality with equalizer:** The current FIR filter coefficients are simple examples. For better audio quality, proper filter design would be needed.

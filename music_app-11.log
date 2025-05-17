@@ -1,0 +1,387 @@
+[2020-02-07 23:13:00] [INFO] MusicApp starting...
+[2020-02-07 23:13:00] [INFO] Loading track 1/2: temple_of_love-sisters_of_mercy.wav
+[2020-02-07 23:13:00] [INFO] wsola_init: WSOLA state initialized successfully. N=441, No=220, Ha=221, Sw=132, InputRingCap=14017
+[2020-02-07 23:13:00] [WARNING] wsola_init: *state_ptr is not NULL. Potential memory leak. Destroying existing state first.
+[2020-02-07 23:13:00] [INFO] wsola_destroy: WSOLA state destroyed.
+[2020-02-07 23:13:00] [INFO] wsola_init: WSOLA state initialized successfully. N=441, No=220, Ha=221, Sw=132, InputRingCap=14017
+[2020-02-07 23:13:00] [INFO] Volume control initialized. Use '+' to increase, '-' to decrease volume. 'p' to pause/resume. ',' for prev, '.' for next track. '['/']' for speed. '1'/'2'/'3' for EQ.
+[2020-02-07 23:13:00] [INFO] Playback speed: 1.5x
+[2020-02-07 23:13:00] [DEBUG] MainLoop: Using WSOLA for speed 1.50x
+[2020-02-07 23:13:00] [DEBUG] WSOLA_PROCESS_ENTRY: num_input=12288, max_output=25017, current_speed=1.50, H_s_eff=147, input_content_start=12288
+[2020-02-07 23:13:00] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=1, out_written=0, H_s_eff=147
+[2020-02-07 23:13:00] [DEBUG] find_best_match: Best offset = -132, Max Corr (scaled) = 0, NCC_float = 0.0000
+[2020-02-07 23:13:00] [DEBUG] WSOLA: Correlation is 0 during initial loop iter (iter: 1). Forcing offset to 0 from -132.
+[2020-02-07 23:13:00] [DEBUG] WSOLA_DISCARD_CHECK: iter=1, min_retain_abs=0, ring_start_abs=0, content_before=12288, samples_to_discard_calc=0
+[2020-02-07 23:13:00] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=2, out_written=147, H_s_eff=147
+[2020-02-07 23:13:00] [DEBUG] find_best_match: Best offset = 0, Max Corr (scaled) = 560275, NCC_float = 0.5603
+[2020-02-07 23:13:00] [DEBUG] WSOLA_DISCARD_CHECK: iter=2, min_retain_abs=90, ring_start_abs=0, content_before=12288, samples_to_discard_calc=90
+[2020-02-07 23:13:00] [DEBUG] WSOLA_DISCARD_DONE: iter=2, discarded=90, new_ring_start_abs=90, new_read_pos=90, new_content=12198
+[2020-02-07 23:13:00] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=3, out_written=294, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 90, Max Corr (scaled) = 773552, NCC_float = 0.7736
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=3, min_retain_abs=311, ring_start_abs=90, content_before=12198, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=3, discarded=221, new_ring_start_abs=311, new_read_pos=311, new_content=11977
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=4, out_written=441, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 45, Max Corr (scaled) = 726071, NCC_float = 0.7261
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=4, min_retain_abs=532, ring_start_abs=311, content_before=11977, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=4, discarded=221, new_ring_start_abs=532, new_read_pos=532, new_content=11756
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=5, out_written=588, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 6, Max Corr (scaled) = 767615, NCC_float = 0.7676
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=5, min_retain_abs=753, ring_start_abs=532, content_before=11756, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=5, discarded=221, new_ring_start_abs=753, new_read_pos=753, new_content=11535
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=6, out_written=735, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -33, Max Corr (scaled) = 699359, NCC_float = 0.6994
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=6, min_retain_abs=974, ring_start_abs=753, content_before=11535, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=6, discarded=221, new_ring_start_abs=974, new_read_pos=974, new_content=11314
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=7, out_written=882, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -73, Max Corr (scaled) = 567852, NCC_float = 0.5679
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=7, min_retain_abs=1195, ring_start_abs=974, content_before=11314, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=7, discarded=221, new_ring_start_abs=1195, new_read_pos=1195, new_content=11093
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=8, out_written=1029, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 9, Max Corr (scaled) = 372311, NCC_float = 0.3723
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=8, min_retain_abs=1416, ring_start_abs=1195, content_before=11093, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=8, discarded=221, new_ring_start_abs=1416, new_read_pos=1416, new_content=10872
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=9, out_written=1176, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -30, Max Corr (scaled) = 706522, NCC_float = 0.7065
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=9, min_retain_abs=1637, ring_start_abs=1416, content_before=10872, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=9, discarded=221, new_ring_start_abs=1637, new_read_pos=1637, new_content=10651
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=10, out_written=1323, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -69, Max Corr (scaled) = 579430, NCC_float = 0.5794
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=10, min_retain_abs=1858, ring_start_abs=1637, content_before=10651, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=10, discarded=221, new_ring_start_abs=1858, new_read_pos=1858, new_content=10430
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=11, out_written=1470, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -109, Max Corr (scaled) = 391010, NCC_float = 0.3910
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=11, min_retain_abs=2079, ring_start_abs=1858, content_before=10430, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=11, discarded=221, new_ring_start_abs=2079, new_read_pos=2079, new_content=10209
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=12, out_written=1617, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 112, Max Corr (scaled) = 630133, NCC_float = 0.6301
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=12, min_retain_abs=2300, ring_start_abs=2079, content_before=10209, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=12, discarded=221, new_ring_start_abs=2300, new_read_pos=2300, new_content=9988
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=13, out_written=1764, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 67, Max Corr (scaled) = 449524, NCC_float = 0.4495
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=13, min_retain_abs=2521, ring_start_abs=2300, content_before=9988, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=13, discarded=221, new_ring_start_abs=2521, new_read_pos=2521, new_content=9767
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=14, out_written=1911, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 28, Max Corr (scaled) = 727992, NCC_float = 0.7280
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=14, min_retain_abs=2742, ring_start_abs=2521, content_before=9767, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=14, discarded=221, new_ring_start_abs=2742, new_read_pos=2742, new_content=9546
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=15, out_written=2058, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -11, Max Corr (scaled) = 757449, NCC_float = 0.7574
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=15, min_retain_abs=2963, ring_start_abs=2742, content_before=9546, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=15, discarded=221, new_ring_start_abs=2963, new_read_pos=2963, new_content=9325
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=16, out_written=2205, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -50, Max Corr (scaled) = 648408, NCC_float = 0.6484
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=16, min_retain_abs=3184, ring_start_abs=2963, content_before=9325, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=16, discarded=221, new_ring_start_abs=3184, new_read_pos=3184, new_content=9104
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=17, out_written=2352, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -90, Max Corr (scaled) = 512086, NCC_float = 0.5121
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=17, min_retain_abs=3405, ring_start_abs=3184, content_before=9104, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=17, discarded=221, new_ring_start_abs=3405, new_read_pos=3405, new_content=8883
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=18, out_written=2499, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 131, Max Corr (scaled) = 661847, NCC_float = 0.6618
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=18, min_retain_abs=3626, ring_start_abs=3405, content_before=8883, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=18, discarded=221, new_ring_start_abs=3626, new_read_pos=3626, new_content=8662
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=19, out_written=2646, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 66, Max Corr (scaled) = 454980, NCC_float = 0.4550
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=19, min_retain_abs=3847, ring_start_abs=3626, content_before=8662, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=19, discarded=221, new_ring_start_abs=3847, new_read_pos=3847, new_content=8441
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=20, out_written=2793, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 28, Max Corr (scaled) = 728693, NCC_float = 0.7287
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=20, min_retain_abs=4068, ring_start_abs=3847, content_before=8441, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=20, discarded=221, new_ring_start_abs=4068, new_read_pos=4068, new_content=8220
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=21, out_written=2940, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -11, Max Corr (scaled) = 757449, NCC_float = 0.7574
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=21, min_retain_abs=4289, ring_start_abs=4068, content_before=8220, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=21, discarded=221, new_ring_start_abs=4289, new_read_pos=4289, new_content=7999
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=22, out_written=3087, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -50, Max Corr (scaled) = 648408, NCC_float = 0.6484
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=22, min_retain_abs=4510, ring_start_abs=4289, content_before=7999, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=22, discarded=221, new_ring_start_abs=4510, new_read_pos=4510, new_content=7778
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=23, out_written=3234, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -90, Max Corr (scaled) = 512086, NCC_float = 0.5121
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=23, min_retain_abs=4731, ring_start_abs=4510, content_before=7778, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=23, discarded=221, new_ring_start_abs=4731, new_read_pos=4731, new_content=7557
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=24, out_written=3381, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 131, Max Corr (scaled) = 661847, NCC_float = 0.6618
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=24, min_retain_abs=4952, ring_start_abs=4731, content_before=7557, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=24, discarded=221, new_ring_start_abs=4952, new_read_pos=4952, new_content=7336
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=25, out_written=3528, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 66, Max Corr (scaled) = 454980, NCC_float = 0.4550
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=25, min_retain_abs=5173, ring_start_abs=4952, content_before=7336, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=25, discarded=221, new_ring_start_abs=5173, new_read_pos=5173, new_content=7115
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=26, out_written=3675, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 28, Max Corr (scaled) = 728693, NCC_float = 0.7287
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=26, min_retain_abs=5394, ring_start_abs=5173, content_before=7115, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=26, discarded=221, new_ring_start_abs=5394, new_read_pos=5394, new_content=6894
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=27, out_written=3822, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -11, Max Corr (scaled) = 757449, NCC_float = 0.7574
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=27, min_retain_abs=5615, ring_start_abs=5394, content_before=6894, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=27, discarded=221, new_ring_start_abs=5615, new_read_pos=5615, new_content=6673
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=28, out_written=3969, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -50, Max Corr (scaled) = 648408, NCC_float = 0.6484
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=28, min_retain_abs=5836, ring_start_abs=5615, content_before=6673, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=28, discarded=221, new_ring_start_abs=5836, new_read_pos=5836, new_content=6452
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=29, out_written=4116, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -90, Max Corr (scaled) = 512086, NCC_float = 0.5121
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=29, min_retain_abs=6057, ring_start_abs=5836, content_before=6452, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=29, discarded=221, new_ring_start_abs=6057, new_read_pos=6057, new_content=6231
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=30, out_written=4263, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 131, Max Corr (scaled) = 661847, NCC_float = 0.6618
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=30, min_retain_abs=6278, ring_start_abs=6057, content_before=6231, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=30, discarded=221, new_ring_start_abs=6278, new_read_pos=6278, new_content=6010
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=31, out_written=4410, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 66, Max Corr (scaled) = 454980, NCC_float = 0.4550
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=31, min_retain_abs=6499, ring_start_abs=6278, content_before=6010, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=31, discarded=221, new_ring_start_abs=6499, new_read_pos=6499, new_content=5789
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=32, out_written=4557, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 28, Max Corr (scaled) = 728693, NCC_float = 0.7287
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=32, min_retain_abs=6720, ring_start_abs=6499, content_before=5789, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=32, discarded=221, new_ring_start_abs=6720, new_read_pos=6720, new_content=5568
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=33, out_written=4704, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -11, Max Corr (scaled) = 757449, NCC_float = 0.7574
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=33, min_retain_abs=6941, ring_start_abs=6720, content_before=5568, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=33, discarded=221, new_ring_start_abs=6941, new_read_pos=6941, new_content=5347
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=34, out_written=4851, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -50, Max Corr (scaled) = 648408, NCC_float = 0.6484
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=34, min_retain_abs=7162, ring_start_abs=6941, content_before=5347, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=34, discarded=221, new_ring_start_abs=7162, new_read_pos=7162, new_content=5126
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=35, out_written=4998, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -90, Max Corr (scaled) = 512086, NCC_float = 0.5121
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=35, min_retain_abs=7383, ring_start_abs=7162, content_before=5126, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=35, discarded=221, new_ring_start_abs=7383, new_read_pos=7383, new_content=4905
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=36, out_written=5145, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 131, Max Corr (scaled) = 661847, NCC_float = 0.6618
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=36, min_retain_abs=7604, ring_start_abs=7383, content_before=4905, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=36, discarded=221, new_ring_start_abs=7604, new_read_pos=7604, new_content=4684
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=37, out_written=5292, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 66, Max Corr (scaled) = 454980, NCC_float = 0.4550
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=37, min_retain_abs=7825, ring_start_abs=7604, content_before=4684, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=37, discarded=221, new_ring_start_abs=7825, new_read_pos=7825, new_content=4463
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=38, out_written=5439, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 28, Max Corr (scaled) = 728693, NCC_float = 0.7287
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=38, min_retain_abs=8046, ring_start_abs=7825, content_before=4463, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=38, discarded=221, new_ring_start_abs=8046, new_read_pos=8046, new_content=4242
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=39, out_written=5586, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -11, Max Corr (scaled) = 757449, NCC_float = 0.7574
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=39, min_retain_abs=8267, ring_start_abs=8046, content_before=4242, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=39, discarded=221, new_ring_start_abs=8267, new_read_pos=8267, new_content=4021
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=40, out_written=5733, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -50, Max Corr (scaled) = 648408, NCC_float = 0.6484
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=40, min_retain_abs=8488, ring_start_abs=8267, content_before=4021, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=40, discarded=221, new_ring_start_abs=8488, new_read_pos=8488, new_content=3800
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=41, out_written=5880, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -90, Max Corr (scaled) = 512086, NCC_float = 0.5121
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=41, min_retain_abs=8709, ring_start_abs=8488, content_before=3800, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=41, discarded=221, new_ring_start_abs=8709, new_read_pos=8709, new_content=3579
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=42, out_written=6027, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 131, Max Corr (scaled) = 661847, NCC_float = 0.6618
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=42, min_retain_abs=8930, ring_start_abs=8709, content_before=3579, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=42, discarded=221, new_ring_start_abs=8930, new_read_pos=8930, new_content=3358
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=43, out_written=6174, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 66, Max Corr (scaled) = 454980, NCC_float = 0.4550
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=43, min_retain_abs=9151, ring_start_abs=8930, content_before=3358, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=43, discarded=221, new_ring_start_abs=9151, new_read_pos=9151, new_content=3137
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=44, out_written=6321, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 28, Max Corr (scaled) = 728693, NCC_float = 0.7287
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=44, min_retain_abs=9372, ring_start_abs=9151, content_before=3137, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=44, discarded=221, new_ring_start_abs=9372, new_read_pos=9372, new_content=2916
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=45, out_written=6468, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -11, Max Corr (scaled) = 757449, NCC_float = 0.7574
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=45, min_retain_abs=9593, ring_start_abs=9372, content_before=2916, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=45, discarded=221, new_ring_start_abs=9593, new_read_pos=9593, new_content=2695
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=46, out_written=6615, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -50, Max Corr (scaled) = 648408, NCC_float = 0.6484
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=46, min_retain_abs=9814, ring_start_abs=9593, content_before=2695, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=46, discarded=221, new_ring_start_abs=9814, new_read_pos=9814, new_content=2474
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=47, out_written=6762, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -90, Max Corr (scaled) = 512086, NCC_float = 0.5121
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=47, min_retain_abs=10035, ring_start_abs=9814, content_before=2474, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=47, discarded=221, new_ring_start_abs=10035, new_read_pos=10035, new_content=2253
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=48, out_written=6909, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 131, Max Corr (scaled) = 661847, NCC_float = 0.6618
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=48, min_retain_abs=10256, ring_start_abs=10035, content_before=2253, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=48, discarded=221, new_ring_start_abs=10256, new_read_pos=10256, new_content=2032
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=49, out_written=7056, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 66, Max Corr (scaled) = 454980, NCC_float = 0.4550
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=49, min_retain_abs=10477, ring_start_abs=10256, content_before=2032, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=49, discarded=221, new_ring_start_abs=10477, new_read_pos=10477, new_content=1811
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=50, out_written=7203, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 28, Max Corr (scaled) = 728693, NCC_float = 0.7287
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=50, min_retain_abs=10698, ring_start_abs=10477, content_before=1811, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=50, discarded=221, new_ring_start_abs=10698, new_read_pos=10698, new_content=1590
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=51, out_written=7350, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -11, Max Corr (scaled) = 757449, NCC_float = 0.7574
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=51, min_retain_abs=10919, ring_start_abs=10698, content_before=1590, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=51, discarded=221, new_ring_start_abs=10919, new_read_pos=10919, new_content=1369
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=52, out_written=7497, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -50, Max Corr (scaled) = 648408, NCC_float = 0.6484
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=52, min_retain_abs=11140, ring_start_abs=10919, content_before=1369, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=52, discarded=221, new_ring_start_abs=11140, new_read_pos=11140, new_content=1148
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=53, out_written=7644, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -90, Max Corr (scaled) = 512086, NCC_float = 0.5121
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=53, min_retain_abs=11361, ring_start_abs=11140, content_before=1148, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=53, discarded=221, new_ring_start_abs=11361, new_read_pos=11361, new_content=927
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=54, out_written=7791, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 131, Max Corr (scaled) = 661847, NCC_float = 0.6618
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=54, min_retain_abs=11582, ring_start_abs=11361, content_before=927, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=54, discarded=221, new_ring_start_abs=11582, new_read_pos=11582, new_content=706
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=55, out_written=7938, H_s_eff=147
+[2020-02-07 23:13:01] [DEBUG] WSOLA_LOOP_BREAK_NO_DATA: iter=55, avail=12288, req=12507
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_EXIT: loop_iters=55, output_written=7938, input_content_end=706, next_ideal_start=11934
+[2020-02-07 23:13:01] [DEBUG] WSOLA_POST_DISCARD_CHECK: min_retain_abs=11582, ring_start_abs=11582, content_before=706, samples_to_discard_calc=0
+[2020-02-07 23:13:01] [WARNING] ALSA underrun occurred (EPIPE), preparing interface.
+[2020-02-07 23:13:01] [INFO] Playback speed: 2.0x
+[2020-02-07 23:13:01] [DEBUG] MainLoop: Using WSOLA for speed 2.00x
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_ENTRY: num_input=12288, max_output=25017, current_speed=2.00, H_s_eff=111, input_content_start=12994
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=1, out_written=0, H_s_eff=111
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -124, Max Corr (scaled) = 352517, NCC_float = 0.3525
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=1, min_retain_abs=11803, ring_start_abs=11582, content_before=12994, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=1, discarded=221, new_ring_start_abs=11803, new_read_pos=11803, new_content=12773
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=2, out_written=111, H_s_eff=111
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 97, Max Corr (scaled) = 828841, NCC_float = 0.8288
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=2, min_retain_abs=12024, ring_start_abs=11803, content_before=12773, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=2, discarded=221, new_ring_start_abs=12024, new_read_pos=12024, new_content=12552
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=3, out_written=222, H_s_eff=111
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -34, Max Corr (scaled) = 598304, NCC_float = 0.5983
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=3, min_retain_abs=12245, ring_start_abs=12024, content_before=12552, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=3, discarded=221, new_ring_start_abs=12245, new_read_pos=12245, new_content=12331
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=4, out_written=333, H_s_eff=111
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 11, Max Corr (scaled) = 768254, NCC_float = 0.7683
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=4, min_retain_abs=12466, ring_start_abs=12245, content_before=12331, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=4, discarded=221, new_ring_start_abs=12466, new_read_pos=12466, new_content=12110
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=5, out_written=444, H_s_eff=111
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 56, Max Corr (scaled) = 720617, NCC_float = 0.7206
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=5, min_retain_abs=12687, ring_start_abs=12466, content_before=12110, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=5, discarded=221, new_ring_start_abs=12687, new_read_pos=12687, new_content=11889
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=6, out_written=555, H_s_eff=111
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 101, Max Corr (scaled) = 718764, NCC_float = 0.7188
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=6, min_retain_abs=12908, ring_start_abs=12687, content_before=11889, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=6, discarded=221, new_ring_start_abs=12908, new_read_pos=12908, new_content=11668
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=7, out_written=666, H_s_eff=111
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = -30, Max Corr (scaled) = 601261, NCC_float = 0.6013
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=7, min_retain_abs=13129, ring_start_abs=12908, content_before=11668, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=7, discarded=221, new_ring_start_abs=13129, new_read_pos=13129, new_content=11447
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=8, out_written=777, H_s_eff=111
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 15, Max Corr (scaled) = 757710, NCC_float = 0.7577
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=8, min_retain_abs=13350, ring_start_abs=13129, content_before=11447, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=8, discarded=221, new_ring_start_abs=13350, new_read_pos=13350, new_content=11226
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=9, out_written=888, H_s_eff=111
+[2020-02-07 23:13:01] [DEBUG] find_best_match: Best offset = 60, Max Corr (scaled) = 718704, NCC_float = 0.7187
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_CHECK: iter=9, min_retain_abs=13571, ring_start_abs=13350, content_before=11226, samples_to_discard_calc=221
+[2020-02-07 23:13:01] [DEBUG] WSOLA_DISCARD_DONE: iter=9, discarded=221, new_ring_start_abs=13571, new_read_pos=13571, new_content=11005
+[2020-02-07 23:13:01] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=10, out_written=999, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 105, Max Corr (scaled) = 681927, NCC_float = 0.6819
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=10, min_retain_abs=13792, ring_start_abs=13571, content_before=11005, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=10, discarded=221, new_ring_start_abs=13792, new_read_pos=13792, new_content=10784
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=11, out_written=1110, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = -26, Max Corr (scaled) = 595357, NCC_float = 0.5954
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=11, min_retain_abs=14013, ring_start_abs=13792, content_before=10784, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=11, discarded=221, new_ring_start_abs=14013, new_read_pos=14013, new_content=10563
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=12, out_written=1221, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 19, Max Corr (scaled) = 747779, NCC_float = 0.7478
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=12, min_retain_abs=14234, ring_start_abs=14013, content_before=10563, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=12, discarded=221, new_ring_start_abs=14234, new_read_pos=217, new_content=10342
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=13, out_written=1332, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 64, Max Corr (scaled) = 708654, NCC_float = 0.7087
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=13, min_retain_abs=14455, ring_start_abs=14234, content_before=10342, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=13, discarded=221, new_ring_start_abs=14455, new_read_pos=438, new_content=10121
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=14, out_written=1443, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 109, Max Corr (scaled) = 650207, NCC_float = 0.6502
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=14, min_retain_abs=14676, ring_start_abs=14455, content_before=10121, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=14, discarded=221, new_ring_start_abs=14676, new_read_pos=659, new_content=9900
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=15, out_written=1554, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = -22, Max Corr (scaled) = 606803, NCC_float = 0.6068
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=15, min_retain_abs=14897, ring_start_abs=14676, content_before=9900, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=15, discarded=221, new_ring_start_abs=14897, new_read_pos=880, new_content=9679
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=16, out_written=1665, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 23, Max Corr (scaled) = 719987, NCC_float = 0.7200
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=16, min_retain_abs=15118, ring_start_abs=14897, content_before=9679, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=16, discarded=221, new_ring_start_abs=15118, new_read_pos=1101, new_content=9458
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=17, out_written=1776, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 68, Max Corr (scaled) = 693865, NCC_float = 0.6939
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=17, min_retain_abs=15339, ring_start_abs=15118, content_before=9458, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=17, discarded=221, new_ring_start_abs=15339, new_read_pos=1322, new_content=9237
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=18, out_written=1887, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 113, Max Corr (scaled) = 619891, NCC_float = 0.6199
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=18, min_retain_abs=15560, ring_start_abs=15339, content_before=9237, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=18, discarded=221, new_ring_start_abs=15560, new_read_pos=1543, new_content=9016
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=19, out_written=1998, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = -18, Max Corr (scaled) = 622117, NCC_float = 0.6221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=19, min_retain_abs=15781, ring_start_abs=15560, content_before=9016, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=19, discarded=221, new_ring_start_abs=15781, new_read_pos=1764, new_content=8795
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=20, out_written=2109, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 27, Max Corr (scaled) = 706271, NCC_float = 0.7063
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=20, min_retain_abs=16002, ring_start_abs=15781, content_before=8795, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=20, discarded=221, new_ring_start_abs=16002, new_read_pos=1985, new_content=8574
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=21, out_written=2220, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 72, Max Corr (scaled) = 702434, NCC_float = 0.7024
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=21, min_retain_abs=16223, ring_start_abs=16002, content_before=8574, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=21, discarded=221, new_ring_start_abs=16223, new_read_pos=2206, new_content=8353
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=22, out_written=2331, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 117, Max Corr (scaled) = 630764, NCC_float = 0.6308
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=22, min_retain_abs=16444, ring_start_abs=16223, content_before=8353, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=22, discarded=221, new_ring_start_abs=16444, new_read_pos=2427, new_content=8132
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=23, out_written=2442, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = -14, Max Corr (scaled) = 635220, NCC_float = 0.6352
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=23, min_retain_abs=16665, ring_start_abs=16444, content_before=8132, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=23, discarded=221, new_ring_start_abs=16665, new_read_pos=2648, new_content=7911
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=24, out_written=2553, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 31, Max Corr (scaled) = 707057, NCC_float = 0.7071
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=24, min_retain_abs=16886, ring_start_abs=16665, content_before=7911, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=24, discarded=221, new_ring_start_abs=16886, new_read_pos=2869, new_content=7690
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=25, out_written=2664, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 76, Max Corr (scaled) = 714386, NCC_float = 0.7144
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=25, min_retain_abs=17107, ring_start_abs=16886, content_before=7690, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=25, discarded=221, new_ring_start_abs=17107, new_read_pos=3090, new_content=7469
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=26, out_written=2775, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 121, Max Corr (scaled) = 628779, NCC_float = 0.6288
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=26, min_retain_abs=17328, ring_start_abs=17107, content_before=7469, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=26, discarded=221, new_ring_start_abs=17328, new_read_pos=3311, new_content=7248
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=27, out_written=2886, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = -10, Max Corr (scaled) = 670905, NCC_float = 0.6709
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=27, min_retain_abs=17549, ring_start_abs=17328, content_before=7248, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=27, discarded=221, new_ring_start_abs=17549, new_read_pos=3532, new_content=7027
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=28, out_written=2997, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 35, Max Corr (scaled) = 712958, NCC_float = 0.7130
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=28, min_retain_abs=17770, ring_start_abs=17549, content_before=7027, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=28, discarded=221, new_ring_start_abs=17770, new_read_pos=3753, new_content=6806
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=29, out_written=3108, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 80, Max Corr (scaled) = 724076, NCC_float = 0.7241
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=29, min_retain_abs=17991, ring_start_abs=17770, content_before=6806, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=29, discarded=221, new_ring_start_abs=17991, new_read_pos=3974, new_content=6585
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=30, out_written=3219, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 125, Max Corr (scaled) = 638445, NCC_float = 0.6384
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=30, min_retain_abs=18212, ring_start_abs=17991, content_before=6585, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=30, discarded=221, new_ring_start_abs=18212, new_read_pos=4195, new_content=6364
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=31, out_written=3330, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = -6, Max Corr (scaled) = 680356, NCC_float = 0.6804
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=31, min_retain_abs=18433, ring_start_abs=18212, content_before=6364, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=31, discarded=221, new_ring_start_abs=18433, new_read_pos=4416, new_content=6143
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=32, out_written=3441, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 39, Max Corr (scaled) = 721372, NCC_float = 0.7214
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=32, min_retain_abs=18654, ring_start_abs=18433, content_before=6143, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=32, discarded=221, new_ring_start_abs=18654, new_read_pos=4637, new_content=5922
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=33, out_written=3552, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 84, Max Corr (scaled) = 729305, NCC_float = 0.7293
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=33, min_retain_abs=18875, ring_start_abs=18654, content_before=5922, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=33, discarded=221, new_ring_start_abs=18875, new_read_pos=4858, new_content=5701
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=34, out_written=3663, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 129, Max Corr (scaled) = 645809, NCC_float = 0.6458
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=34, min_retain_abs=19096, ring_start_abs=18875, content_before=5701, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=34, discarded=221, new_ring_start_abs=19096, new_read_pos=5079, new_content=5480
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=35, out_written=3774, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = -2, Max Corr (scaled) = 684635, NCC_float = 0.6846
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=35, min_retain_abs=19317, ring_start_abs=19096, content_before=5480, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=35, discarded=221, new_ring_start_abs=19317, new_read_pos=5300, new_content=5259
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=36, out_written=3885, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 43, Max Corr (scaled) = 727121, NCC_float = 0.7271
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=36, min_retain_abs=19538, ring_start_abs=19317, content_before=5259, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=36, discarded=221, new_ring_start_abs=19538, new_read_pos=5521, new_content=5038
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=37, out_written=3996, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 88, Max Corr (scaled) = 733944, NCC_float = 0.7339
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=37, min_retain_abs=19759, ring_start_abs=19538, content_before=5038, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=37, discarded=221, new_ring_start_abs=19759, new_read_pos=5742, new_content=4817
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=38, out_written=4107, H_s_eff=111
+[2020-02-07 23:13:02] [DEBUG] find_best_match: Best offset = 132, Max Corr (scaled) = 622663, NCC_float = 0.6227
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_CHECK: iter=38, min_retain_abs=19980, ring_start_abs=19759, content_before=4817, samples_to_discard_calc=221
+[2020-02-07 23:13:02] [DEBUG] WSOLA_DISCARD_DONE: iter=38, discarded=221, new_ring_start_abs=19980, new_read_pos=5963, new_content=4596
+[2020-02-07 23:13:02] [DEBUG] WSOLA_PROCESS_LOOP_ITER: iter=39, out_written=4218, H_s_eff=111
