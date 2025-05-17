@@ -2226,10 +2226,10 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         return 0;
     }
 
-    // Re-introduce static fade_in/fade_out buffers for sqrt-Hanning crossfade
-    static float *fade_out = NULL;
-    static float *fade_in = NULL;
-    static int last_fade_length = 0;
+    // Explicit fade_in/fade_out buffers are removed as per direct sum OLA with sqrt-Hanning.
+    // static float *fade_out = NULL;
+    // static float *fade_in = NULL;
+    // static int last_fade_length = 0;
 
     if (input_samples && num_input_samples > 0)
     {
@@ -2308,98 +2308,77 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         }
 
         // Apply the Q15 Sine analysis window to the entire current_synthesis_segment (N samples).
-        // for (int i = 0; i < N; ++i) {
-        //     long long val_ll = (long long)state->current_synthesis_segment[i] * state->analysis_window_function[i];
-        //     state->current_synthesis_segment[i] = (short)(val_ll >> 15);
-        // }
+        for (int i = 0; i < N; ++i) {
+            long long val_ll = (long long)state->current_synthesis_segment[i] * state->analysis_window_function[i];
+            state->current_synthesis_segment[i] = (short)(val_ll >> 15);
+        }
 
         // OLA produces N_o samples in this iteration.
-        int samples_written_this_frame_ola = 0;
+        // int samples_written_this_frame_ola = 0; // No longer needed with direct loop update
 
         // --- Generate Sqrt-Hanning cross-fade windows if needed ---
-        if (fade_in == NULL || fade_out == NULL || last_fade_length != N_o)
-        {
-            if (fade_in)
-                free(fade_in);
-            if (fade_out)
-                free(fade_out);
+        // This block is removed as we are using direct sum OLA.
+        // if (fade_in == NULL || fade_out == NULL || last_fade_length != N_o)
+        // {
+        //     if (fade_in)
+        //         free(fade_in);
+        //     if (fade_out)
+        //         free(fade_out);
+        //
+        //     fade_in = (float *)malloc(N_o * sizeof(float));
+        //     fade_out = (float *)malloc(N_o * sizeof(float));
+        //
+        //     if (!fade_in || !fade_out)
+        //     {
+        //         app_log("ERROR", "WSOLA: Failed to allocate memory for fade windows.");
+        //         if (fade_in) { free(fade_in); fade_in = NULL; }
+        //         if (fade_out) { free(fade_out); fade_out = NULL; }
+        //     }
+        //     else
+        //     {
+        //         last_fade_length = N_o;
+        //         for (int i = 0; i < N_o; i++)
+        //         {
+        //             float t = (N_o == 1) ? 0.0f : (float)i / (float)(N_o - 1); // Normalized 0 to 1
+        //             fade_in[i] = sinf((M_PI / 2.0f) * t);                      /*  sqrt-Hann for fade-in */
+        //             fade_out[i] = cosf((M_PI / 2.0f) * t);                     /*  sqrt-Hann for fade-out */
+        //         }
+        //         DBG("WSOLA: Generated new sqrt-Hanning crossfade windows, length=%d", N_o);
+        //     }
+        // }
 
-            fade_in = (float *)malloc(N_o * sizeof(float));
-            fade_out = (float *)malloc(N_o * sizeof(float));
-
-            if (!fade_in || !fade_out)
-            {
-                app_log("ERROR", "WSOLA: Failed to allocate memory for fade windows.");
-                // Potentially free the one that succeeded and return 0 or handle error
-                if (fade_in)
-                {
-                    free(fade_in);
-                    fade_in = NULL;
-                }
-                if (fade_out)
-                {
-                    free(fade_out);
-                    fade_out = NULL;
-                }
-                // Not returning here, will attempt OLA without fade if it falls through, but that's bad.
-                // For safety, let's ensure the OLA loop won't use them if NULL.
-            }
-            else
-            {
-                last_fade_length = N_o;
-                for (int i = 0; i < N_o; i++)
-                {
-                    float t = (N_o == 1) ? 0.0f : (float)i / (float)(N_o - 1); // Normalized 0 to 1
-                    fade_in[i] = sinf((M_PI / 2.0f) * t);                      /*  sqrt-Hann for fade-in */
-                    fade_out[i] = cosf((M_PI / 2.0f) * t);                     /*  sqrt-Hann for fade-out */
-                }
-                DBG("WSOLA: Generated new sqrt-Hanning crossfade windows, length=%d", N_o);
-            }
-        }
-
-        // --- Overlap-Add with Sqrt-Hanning Crossfade ---
-        if (state->total_output_samples_generated == 0)
-        {
-            /* first ever frame – just copy, no ramp */
-            memcpy(output_buffer + output_samples_written,
-                   state->current_synthesis_segment,
-                   N_o * sizeof(short));
-            output_samples_written += N_o;
-            samples_written_this_frame_ola = N_o;
-        }
-        else if (fade_in && fade_out)
-        {
+        // --- Overlap-Add with Direct Summation ---
+        // The first frame special handling is not strictly necessary with direct sum
+        // if output_overlap_add_buffer is initialized to zero.
+        // if (state->total_output_samples_generated == 0)
+        // {
+        //     /* first ever frame – just copy, no ramp */
+        //     memcpy(output_buffer + output_samples_written,
+        //            state->current_synthesis_segment,
+        //            N_o * sizeof(short));
+        //     output_samples_written += N_o;
+        //     // samples_written_this_frame_ola = N_o; // No longer needed
+        // }
+        // else
+        // { // This 'else' is removed
             for (int i = 0; i < N_o; ++i)
             {
-                float s_ola = (float)state->output_overlap_add_buffer[i] * fade_out[i] +
-                              (float)state->current_synthesis_segment[i] * fade_in[i];
+                // Direct sum of older tail and new head
+                long long s_ola_ll = (long long)state->output_overlap_add_buffer[i] +
+                                   (long long)state->current_synthesis_segment[i];
 
-                int si_ola = (int)roundf(s_ola);
-                if (si_ola > 32767)
-                    si_ola = 32767;
-                else if (si_ola < -32768)
-                    si_ola = -32768;
+                short s_ola_s16;
+                if (s_ola_ll > 32767)
+                    s_ola_s16 = 32767;
+                else if (s_ola_ll < -32768)
+                    s_ola_s16 = -32768;
+                else
+                    s_ola_s16 = (short)s_ola_ll;
 
-                output_buffer[output_samples_written++] = (short)si_ola;
-                samples_written_this_frame_ola++;
+                output_buffer[output_samples_written++] = s_ola_s16;
+                // samples_written_this_frame_ola++; // No longer needed
             }
-        }
-        else
-        {
-            // Fallback: If fade windows failed to allocate, do a simple (but incorrect for sine) direct add.
-            // This will sound bad but prevents a crash. A proper error path might be better.
-            app_log("WARNING", "WSOLA: Fade windows not available. Using direct sum for OLA (will cause artifacts).");
-            for (int i = 0; i < N_o; ++i)
-            {
-                long long sum = (long long)state->output_overlap_add_buffer[i] + state->current_synthesis_segment[i];
-                if (sum > 32767)
-                    sum = 32767;
-                else if (sum < -32768)
-                    sum = -32768;
-                output_buffer[output_samples_written++] = (short)sum;
-                samples_written_this_frame_ola++;
-            }
-        }
+        // } // This 'else' closing brace is removed
 
         // Update the output_overlap_add_buffer with the tail (second half) of the current *windowed* synthesis segment
         if (N_o > 0)
@@ -2466,39 +2445,43 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         // Never discard data before stream position 0
         if (min_retainable_abs_offset < 0)
             min_retainable_abs_offset = 0;
-
+        
         // Calculate how many samples can be safely discarded
-        int samples_to_discard = (int)(min_retainable_abs_offset - state->input_ring_buffer_stream_start_offset);
+        // This was the discard logic from the end of the loop, moved here.
+        long long current_ring_start_abs_offset_post_loop = state->input_ring_buffer_stream_start_offset;
+        int samples_to_discard_post_loop = (int)(min_retainable_abs_offset - current_ring_start_abs_offset_post_loop);
 
-        // Only log if we're actually discarding something
-        if (samples_to_discard > 0)
+        DBG("WSOLA_POST_LOOP_DISCARD_CHECK: min_retain_abs=%lld, ring_start_abs=%lld, content_before=%d, samples_to_discard_calc=%d",
+            min_retainable_abs_offset, current_ring_start_abs_offset_post_loop, state->input_buffer_content, samples_to_discard_post_loop);
+
+        if (samples_to_discard_post_loop > 0)
         {
-            DBG("WSOLA_RING_BUFFER: next_ideal=%lld, min_retain=%lld, content=%d, to_discard=%d",
-                state->next_ideal_input_frame_start_sample_offset,
-                min_retainable_abs_offset,
-                state->input_buffer_content,
-                samples_to_discard);
-
-            // Prevent over-discarding (safety check)
-            if (samples_to_discard > state->input_buffer_content / 2)
+            if (samples_to_discard_post_loop > state->input_buffer_content)
             {
-                // Only discard half of the buffer at most to prevent rapid emptying
-                samples_to_discard = state->input_buffer_content / 2;
-                DBG("WSOLA_RING_BUFFER: Limiting discard to 50%% of buffer: %d samples", samples_to_discard);
+                app_log("WARNING", "WSOLA_POST_LOOP_DISCARD: Attempting to discard %d, but only %d content. Clamping.", samples_to_discard_post_loop, state->input_buffer_content);
+                samples_to_discard_post_loop = state->input_buffer_content;
+            }
+            // Ensure not to discard excessively if the buffer is nearly empty or small relative to discard amount
+            // For example, if content is small, don't discard nearly all of it unless necessary.
+            // This check helps prevent discarding too much if min_retainable_abs_offset is far ahead due to speed changes.
+            // Limit discard to a fraction of current content if content is small to avoid aggressive emptying.
+            if (state->input_buffer_content < (state->analysis_frame_samples + 2 * state->search_window_samples) && samples_to_discard_post_loop > state->input_buffer_content / 2) {
+                 samples_to_discard_post_loop = state->input_buffer_content / 2; // More conservative discard
+                 DBG("WSOLA_POST_LOOP_DISCARD: Buffer content low, limiting discard to %d", samples_to_discard_post_loop);
             }
 
-            // Only discard if we have enough samples to make it worthwhile
-            // Prevents excessive small discard operations
-            if (samples_to_discard >= state->analysis_hop_samples / 2)
-            {
-                // Update the buffer position tracking
-                state->input_buffer_read_pos = (state->input_buffer_read_pos + samples_to_discard) % state->input_buffer_capacity;
-                state->input_buffer_content -= samples_to_discard;
-                state->input_ring_buffer_stream_start_offset += samples_to_discard;
 
-                DBG("WSOLA_RING_BUFFER: Discarded %d samples, buffer now %d/%d full",
-                    samples_to_discard, state->input_buffer_content, state->input_buffer_capacity);
+            if (samples_to_discard_post_loop > 0) { // Re-check after potential adjustment
+                state->input_buffer_read_pos = (state->input_buffer_read_pos + samples_to_discard_post_loop) % state->input_buffer_capacity;
+                state->input_buffer_content -= samples_to_discard_post_loop;
+                state->input_ring_buffer_stream_start_offset += samples_to_discard_post_loop;
+                DBG("WSOLA_POST_LOOP_DISCARD_DONE: discarded=%d, new_ring_start_abs=%lld, new_read_pos=%d, new_content=%d",
+                    samples_to_discard_post_loop, state->input_ring_buffer_stream_start_offset, state->input_buffer_read_pos, state->input_buffer_content);
             }
+        }
+        else if (samples_to_discard_post_loop < 0)
+        {
+             DBG("WSOLA_POST_LOOP_DISCARD_SKIP: samples_to_discard_calc was %d (negative).", samples_to_discard_post_loop);
         }
     }
     // --- End Conservative Ring Buffer Management ---
