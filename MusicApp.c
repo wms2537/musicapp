@@ -72,6 +72,9 @@ const char *mixer_control_name = "PCM";
 // max output for the speaker on board is not accurate
 bool USR_BOARD_SPEAKER_MAX = true;
 bool playback_paused = false; // Added for Pause/Resume functionality
+static float hpf_prev_input = 0.0f;
+static float hpf_prev_output = 0.0f;
+static const float HPF_ALPHA = 0.995f; // High-pass filter coefficient (~70Hz cutoff at 44.1kHz)
 
 // --- Music File Playlist Globals ---
 char **music_files = NULL;
@@ -1026,6 +1029,22 @@ int main(int argc, char *argv[]) {
 
         // ALSA Write Loop
         if (frames_for_alsa > 0 && buffer_for_alsa != NULL) {
+            // High-pass filter to remove low-frequency hum while preserving tempo-changed audio
+            if (pcm_format == SND_PCM_FORMAT_S16_LE && wav_header.num_channels == 1) {
+                int total_samples = frames_for_alsa * wav_header.num_channels;
+                short *hpf_samples = (short *)buffer_for_alsa;
+                for (int i = 0; i < total_samples; ++i) {
+                    float in = (float)hpf_samples[i];
+                    float out = HPF_ALPHA * (hpf_prev_output + in - hpf_prev_input);
+                    hpf_prev_input = in;
+                    hpf_prev_output = out;
+                    int samp = (int)roundf(out);
+                    if (samp > 32767) samp = 32767;
+                    if (samp < -32768) samp = -32768;
+                    hpf_samples[i] = (short)samp;
+                }
+            }
+
             unsigned char *ptr_to_write = buffer_for_alsa;
             snd_pcm_uframes_t remaining_frames_to_write = frames_for_alsa;
 
@@ -1739,9 +1758,6 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
         // Extract the N-sample segment into state->current_synthesis_segment
         if (!get_segment_from_ring_buffer(state, actual_synthesis_segment_start_ring_idx, N, state->current_synthesis_segment)) {
             app_log("ERROR", "WSOLA: Failed to get synthesis segment from ring buffer. Skipping frame.");
-            // This is a critical issue, implies logic error or insufficient data despite checks.
-            // Attempt to advance input markers to prevent infinite loop if possible, or break.
-            // For now, just break to avoid bad state propagation.
             break; 
         }
 
@@ -2058,3 +2074,7 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
 
     return output_samples_written;
 }
+
+static float hpf_prev_input = 0.0f;
+static float hpf_prev_output = 0.0f;
+static const float HPF_ALPHA = 0.995f; // High-pass filter coefficient (~70Hz cutoff at 44.1kHz)
