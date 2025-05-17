@@ -1928,21 +1928,17 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
             if (fade_out && fade_in) {
                 last_fade_length = N_o;
                 
-                // Generate Complementary Hanning windows (sum to 1)
+                // Generate Constant-Power (sqrt-Hanning) crossfade windows
                 for (int i = 0; i < N_o; ++i) {
                     // Position in window [0,1]
-                    float pos = (float)i / (float)(N_o - 1);
+                    float theta = (float)i / (float)(N_o - 1); // Normalized position 0 to 1
                     
-                    // Create Complementary Hanning windows (sum to 1)
-                    float c_val = cosf(M_PI * pos);
-                    fade_out[i] = 0.5f * (1.0f + c_val); 
-                    fade_in[i]  = 0.5f * (1.0f - c_val);
-
-                    // The previous normalization for constant power is no longer needed
-                    // as fade_out[i] + fade_in[i] will equal 1.0f.
+                    // sqrt-Hanning pair (cos(pi*t/2), sin(pi*t/2))
+                    fade_out[i] = cosf((M_PI / 2.0f) * theta); 
+                    fade_in[i]  = sinf((M_PI / 2.0f) * theta);
                 }
                 
-                DBG("WSOLA: Generated new complementary Hanning crossfade windows, length=%d", N_o);
+                DBG("WSOLA: Generated new constant-power (sqrt-Hanning) crossfade windows, length=%d", N_o);
             }
         }
         
