@@ -626,14 +626,69 @@ void open_music_file(const char *path_name)
     printf("Audio Format: %u (1=PCM), Num Channels: %u\n", wav_header.audio_format, wav_header.num_channels);
     printf("Sample Rate: %u, Byte Rate: %u\n", wav_header.sample_rate, wav_header.byte_rate);
     printf("Block Align: %u, Bits Per Sample: %u\n", wav_header.block_align, wav_header.bits_per_sample);
-    if (strncmp(wav_header.sub_chunk2_id, "data", 4) == 0)
-    {
-        printf("Data ID: %.4s, Data Size: %u\n", wav_header.sub_chunk2_id, wav_header.sub_chunk2_size);
+
+    // --- Find the 'data' chunk, skipping other chunks --- 
+    char chunk_id_buffer[4];
+    uint32_t chunk_size_buffer;
+    int found_data_chunk = 0;
+    long current_pos = ftell(fp); // Keep track of position in case of errors
+
+    // The sub_chunk2_id and sub_chunk2_size are typically read after sub_chunk1_size.
+    // If the file is strictly conforming, sub_chunk2_id is immediately after fmt chunk details.
+    // However, other chunks like LIST, JUNK can appear. We need to find 'data'.
+
+    while(true) {
+        if (fread(wav_header.sub_chunk2_id, 1, 4, fp) != 4) {
+            if (feof(fp)) {
+                fprintf(stderr, "Error: Reached EOF before finding 'data' chunk or valid chunk ID.\n");
+            } else {
+                perror("Error reading next chunk ID");
+            }
+            fclose(fp);
+            exit(EXIT_FAILURE);
+        }
+        wav_header.sub_chunk2_id[4] = '\0'; // Null-terminate for strncmp and printf
+
+        if (fread(&wav_header.sub_chunk2_size, 1, 4, fp) != 4) {
+            fprintf(stderr, "Error: Could not read chunk size for ID: %.4s\n", wav_header.sub_chunk2_id);
+            fclose(fp);
+            exit(EXIT_FAILURE);
+        }
+
+        if (strncmp(wav_header.sub_chunk2_id, "data", 4) == 0) {
+            printf("Data ID: %.4s, Data Size: %u\n", wav_header.sub_chunk2_id, wav_header.sub_chunk2_size);
+            found_data_chunk = 1;
+            break; // Found the data chunk
+        } else {
+            printf("Skipping chunk: %.4s, Size: %u\n", wav_header.sub_chunk2_id, wav_header.sub_chunk2_size);
+            // Check for excessively large chunk size to prevent seeking too far
+            if (wav_header.sub_chunk2_size > wav_header.chunk_size) { // chunk_size is total RIFF size
+                 fprintf(stderr, "Error: Encountered chunk '%.4s' with invalid size %u larger than RIFF chunk size %u.\n", 
+                         wav_header.sub_chunk2_id, wav_header.sub_chunk2_size, wav_header.chunk_size);
+                 fclose(fp);
+                 exit(EXIT_FAILURE);
+            }
+            if (fseek(fp, wav_header.sub_chunk2_size, SEEK_CUR) != 0) {
+                perror("Error seeking past chunk");
+                fprintf(stderr, "Failed while trying to skip %.4s (size %u)\n", wav_header.sub_chunk2_id, wav_header.sub_chunk2_size);
+                fclose(fp);
+                exit(EXIT_FAILURE);
+            }
+            current_pos = ftell(fp);
+            if (current_pos >= wav_header.chunk_size + 8) { // 8 for RIFF ID and size
+                 fprintf(stderr, "Error: Scanned past expected end of RIFF chunk while searching for 'data' chunk.\n");
+                 fclose(fp);
+                 exit(EXIT_FAILURE);
+            }
+        }
     }
-    else
-    {
-        printf("Warning: 'data' chunk ID not found immediately. sub_chunk2_id: %.4s\n", wav_header.sub_chunk2_id);
+
+    if (!found_data_chunk) {
+        fprintf(stderr, "Error: 'data' chunk not found in WAV file after scanning.\n");
+        fclose(fp);
+        exit(EXIT_FAILURE);
     }
+
     printf("-----------------------------------------\n");
 }
 
