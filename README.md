@@ -1,24 +1,106 @@
-# MusicApp - A Simple WAV Player
+# MusicApp
 
-This is a command-line WAV audio player for Linux using ALSA for playback and volume control.
+A simple command-line music player application written in C that uses ALSA for audio playback.
 
 ## Features
 
-*   Plays WAV audio files.
-*   Volume control (+/- keys).
-*   Pause/Resume playback ('p' key).
-*   Seek forward 10 seconds ('f' key).
-*   Seek backward 10 seconds ('b' key).
-*   Playlist functionality: Plays multiple files specified on the command line.
-*   Next track ('.' key).
-*   Previous track (',' key).
-*   Auto-plays next track in the playlist.
-*   Playback speed selection and control ('[' to decrease, ']' to increase speed between 0.5x, 1.0x, 1.5x, 2.0x).
-    *   Uses WSOLA (Waveform Similarity Overlap-Add) for pitch-preserving speed adjustment.
-    *   Optional simple seek-based speed control that changes pitch (similar to Music_App.c implementation).
-*   Selectable output device (on-board speaker vs external via -d option).
-*   Enhanced logging to console (using `app_log` with timestamps and types) and to `music_app.log` file.
-*   Audio Equalizer ( '1' for Normal, '2' for Bass Boost, '3' for Treble Boost).
+*   Playback of WAV files.
+*   Volume control.
+*   Pause/Resume functionality.
+*   Track navigation (next/previous).
+*   Playback speed control (simple pitch-changing or WSOLA pitch-preserving).
+*   Basic equalizer presets.
+
+## Dependencies
+
+*   ALSA library (`libasound2`)
+*   C compiler (e.g., `gcc`)
+*   Math library (`libm`)
+
+## Compilation (Manual)
+
+To compile the application manually (without Docker):
+
+```bash
+gcc -o MusicApp MusicApp.c const.h -lasound -lm -D_GNU_SOURCE
+```
+
+## Usage (Manual)
+
+```bash
+./MusicApp [options] <music_file1.wav> [music_file2.wav ...]
+```
+
+### Options:
+
+*   `-f <format_code>`: Specify PCM format code.
+    *   Supported codes: 1 (S16_LE), 2 (S16_BE), 3 (S24_LE), 4 (S24_BE), 5 (S24_3LE), 6 (S24_3BE), 7 (S32_LE), 8 (S32_BE)
+*   `-r <rate_code>`: Specify sample rate code.
+    *   Supported codes: 8 (8000Hz), 44 (44100Hz), 48 (48000Hz), 88 (88200Hz)
+*   `-d <device_code>`: Specify output device (0 for default/board speaker, 1 for external).
+*   `-s <speed_method>`: Specify speed control method (0 for simple seek-based, 1 for WSOLA).
+
+### In-app Controls (while playing):
+
+*   `+`: Increase volume
+*   `-`: Decrease volume
+*   `p`: Pause/Resume playback
+*   `f`: Seek forward 10 seconds
+*   `b`: Seek backward 10 seconds
+*   `.`: Next track
+*   `,`: Previous track
+*   `[`: Decrease playback speed
+*   `]`: Increase playback speed
+*   `1`, `2`, `3`: Cycle through EQ presets (Normal, Bass Boost, Treble Boost)
+
+## Running with Docker
+
+This application can be run inside a Docker container. This is useful for ensuring a consistent runtime environment, especially for ALSA dependencies.
+
+### Prerequisites
+
+*   Docker installed and running.
+
+### Building the Docker Image
+
+1.  Ensure you have the `Dockerfile` (provided in the project) in the same directory as `MusicApp.c` and `const.h`.
+2.  Open your terminal in the project directory and run:
+
+    ```bash
+    docker build -t musicapp-image .
+    ```
+
+### Running the Docker Container
+
+To run the application using the Docker image:
+
+```bash
+docker run --rm -it \
+    --device /dev/snd \
+    -v "$(pwd)/your_music_directory:/app/music" \
+    musicapp-image music/your_music_file.wav [music/another_file.wav ...] [options]
+```
+
+**Explanation of the `docker run` command:**
+
+*   `--rm`: Automatically removes the container when it exits.
+*   `-it`: Runs the container in interactive mode with a TTY, so you can use keyboard controls.
+*   `--device /dev/snd`: **Crucial step.** This shares your host's sound device with the container, allowing ALSA to work.
+*   `-v "$(pwd)/your_music_directory:/app/music"`: This is an example of mounting a local directory containing your music files into the container at `/app/music`.
+    *   Replace `$(pwd)/your_music_directory` with the actual path to your music files on your host machine.
+    *   Inside the container, you'll then refer to your music files as `music/your_music_file.wav`.
+    *   If your music files are in the same directory as the `Dockerfile` and `MusicApp.c`, and you copied them into the image using `COPY music_files/ ./music_files/` in the Dockerfile, you might not need this volume mount, or you'd adjust the path accordingly.
+*   `musicapp-image`: The name of the Docker image you built.
+*   `music/your_music_file.wav ...`: Arguments passed to the `MusicApp` executable inside the container (paths to your music files, relative to the container's `/app` directory or the mounted volume).
+*   `[options]`: Any of the command-line options supported by `MusicApp` (e.g., `-r 44`, `-s 1`).
+
+**Important Considerations for Docker and ALSA:**
+
+*   **Permissions**: The user inside the Docker container might need to be part of the `audio` group to access `/dev/snd`. The `ubuntu` base image's default user (`root`) should typically have access, but if you change the user in the Dockerfile, you might need to add it to the `audio` group (the GID of the `audio` group can vary, so this sometimes requires inspecting the host's GID for `audio` and matching it).
+*   **PulseAudio**: If your host system uses PulseAudio, you might need additional configuration to route ALSA sound from the container through PulseAudio. This can involve mounting the PulseAudio socket (`/run/user/$(id -u)/pulse/native` or `/var/run/pulse/native`) and setting the `PULSE_SERVER` environment variable. The `--device /dev/snd` method is often simpler and works for many direct ALSA applications.
+*   **Music Files**: Ensure your music files are accessible to the Docker container, either by `COPY`ing them into the image during the build or by mounting a volume at runtime using the `-v` flag as shown.
+
+This setup should allow you to run your ALSA-based music application within a Docker container.
 
 ## Playback Speed Options
 
@@ -58,78 +140,6 @@ This approach:
 4. May introduce some audio artifacts due to the simple implementation
 
 To use the simple speed control method instead of WSOLA, use the `-s 0` command-line option.
-
-## Compilation
-
-To compile the application, you need the ALSA development libraries (e.g., `libasound2-dev` on Debian/Ubuntu).
-
-```bash
-gcc MusicApp.c -o MusicApp -lasound -lm
-```
-
-## Usage
-
-```bash
-./MusicApp [options] <music_file1.wav> [music_file2.wav ...]
-```
-
-**Options:**
-
-*   `-f <format_code>`: Specify PCM format. (See source for codes, e.g., 161 for S16_LE).
-    *   `161`: SND_PCM_FORMAT_S16_LE
-    *   `162`: SND_PCM_FORMAT_S16_BE
-    *   `241`: SND_PCM_FORMAT_S24_LE
-    *   `242`: SND_PCM_FORMAT_S24_BE
-    *   `2431`: SND_PCM_FORMAT_S24_3LE
-    *   `2432`: SND_PCM_FORMAT_S24_3BE
-    *   `321`: SND_PCM_FORMAT_S32_LE
-    *   `322`: SND_PCM_FORMAT_S32_BE
-*   `-r <rate_code>`: Specify sample rate. (e.g., 44 for 44100 Hz, 48 for 48000 Hz).
-    *   `8`: 8000 Hz
-    *   `44`: 44100 Hz
-    *   `48`: 48000 Hz
-    *   `88`: 88200 Hz
-*   `-d <device_code>`: Specify output device.
-    *   `0`: Default on-board speaker (may have limited max volume).
-    *   `1`: External sound output device (assumes full volume range).
-*   `-s <speed_method>`: Specify playback speed control method.
-    *   `0`: Simple seek-based speed control (changes pitch, lower CPU usage).
-    *   `1`: WSOLA pitch-preserving speed control (default).
-
-If format or rate are not specified, the program attempts to infer them from the WAV header.
-
-**Interactive Controls (during playback):**
-
-*   `+`: Increase volume.
-*   `-`: Decrease volume.
-*   `p`: Toggle pause/resume playback.
-*   `f`: Seek forward 10 seconds.
-*   `b`: Seek backward 10 seconds.
-*   `.`: Play next track.
-*   `,`: Play previous track.
-*   `[`: Decrease playback speed (cycles through 0.5x, 1.0x, 1.5x, 2.0x).
-*   `]`: Increase playback speed (cycles through 0.5x, 1.0x, 1.5x, 2.0x).
-*   `1`: Set Equalizer to Normal (Flat)
-*   `2`: Set Equalizer to Bass Boost (Note: Coefficients are illustrative)
-*   `3`: Set Equalizer to Treble Boost (Note: Coefficients are illustrative)
-
-## Dependencies
-
-*   ALSA library (`libasound`)
-*   Math library (`libm` for `sqrt`, `pow` functions used in WSOLA and FIR filter)
-
-## Recent Fixes
-
-* **WSOLA Algorithm**: Completely overhauled the implementation with numerous fixes to the core time-scaling algorithm:
-  - Implemented constant-power crossfade for distortion-free transitions
-  - Added multi-resolution segment search for better audio quality
-  - Created robust continuity tracking to avoid discontinuities
-  - Improved floating-point precision in window calculations
-  - Enhanced ring buffer management with safety margins
-  - Optimized algorithm parameters (larger frames, higher overlap)
-* **Playback Speed Control**: The application now dynamically updates all internal parameters when speed changes for consistent audio quality at any speed.
-* **Audio Quality**: Eliminated distortion, buzzing and random noise that occurred at non-1.0x speeds.
-* **Cross-Correlation**: Enhanced the segment matching with triangular windowing and DC offset removal for more accurate matching in all types of audio content.
 
 ## Known Issues / Future Work
 

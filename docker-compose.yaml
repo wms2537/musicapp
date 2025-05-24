@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  musicapp:
+    build:
+      context: . 
+    image: musicapp-image 
+    container_name: musicapp_player 
+    volumes:
+      - .:/app
+    environment:
+      - PULSE_SERVER=tcp:host.docker.internal:4713
+      - PULSE_COOKIE=/dev/null
+    stdin_open: true 
+    tty: true

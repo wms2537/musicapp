@@ -109,7 +109,9 @@ static short fir_history[MAX_FIR_TAPS - 1]; // Buffer to store previous samples 
 static int fir_filter_history_idx = 0;      // Index for circular FIR history buffer
 
 // --- WSOLA State Global ---
-WSOLA_State *wsola_state = NULL;
+// WSOLA_State *wsola_state = NULL; // Old global, replaced by L/R specifics
+WSOLA_State *wsola_state_L = NULL; // WSOLA state for Left channel (or Mono)
+WSOLA_State *wsola_state_R = NULL; // WSOLA state for Right channel (if stereo)
 
 // Definition of reconfigure_alsa_for_track
 static bool reconfigure_alsa_for_track() {
@@ -765,22 +767,14 @@ void open_music_file(const char *path_name)
         exit(EXIT_FAILURE);
     }
 
-    printf("------------- WAV Header Info (Post-Parse) -------------
-");
-    printf("RIFF ID: %.4s, Chunk Size: %u, Format: %.4s
-", wav_header.chunk_id, wav_header.chunk_size, wav_header.format);
-    printf("Subchunk1 ID: %.4s, Subchunk1 Size: %u
-", wav_header.sub_chunk1_id, wav_header.sub_chunk1_size);
-    printf("Audio Format: %u (1=PCM), Num Channels: %u
-", wav_header.audio_format, wav_header.num_channels);
-    printf("Sample Rate: %u, Byte Rate: %u
-", wav_header.sample_rate, wav_header.byte_rate);
-    printf("Block Align: %u, Bits Per Sample: %u
-", wav_header.block_align, wav_header.bits_per_sample);
-    printf("Data ID: %.4s, Data Size: %u
-", wav_header.sub_chunk2_id, wav_header.sub_chunk2_size);
-    printf("--------------------------------------------------------
-");
+    printf("------------- WAV Header Info (Post-Parse) ------------- \n");
+    printf("RIFF ID: %.4s, Chunk Size: %u, Format: %.4s\n", wav_header.chunk_id, wav_header.chunk_size, wav_header.format);
+    printf("Subchunk1 ID: %.4s, Subchunk1 Size: %u\n", wav_header.sub_chunk1_id, wav_header.sub_chunk1_size);
+    printf("Audio Format: %u (1=PCM), Num Channels: %u\n", wav_header.audio_format, wav_header.num_channels);
+    printf("Sample Rate: %u, Byte Rate: %u\n", wav_header.sample_rate, wav_header.byte_rate);
+    printf("Block Align: %u, Bits Per Sample: %u\n", wav_header.block_align, wav_header.bits_per_sample);
+    printf("Data ID: %.4s, Data Size: %u\n", wav_header.sub_chunk2_id, wav_header.sub_chunk2_size);
+    printf("--------------------------------------------------------\n");
     app_log("INFO", "Successfully parsed WAV header for: %s", path_name);
     return;
 
@@ -789,7 +783,7 @@ fmt_read_error:
     fclose(fp);
     exit(EXIT_FAILURE);
 fmt_incomplete_error:
-     fprintf(stderr, "Error: 'fmt ' chunk (size %u) is too small to contain all expected core fields (needed %zu bytes).\n", wav_header.sub_chunk1_size, bytes_read_from_fmt + 2 /*approx for next field*/);
+     fprintf(stderr, "Error: 'fmt ' chunk (size %u) is too small to contain all expected core fields.\n", wav_header.sub_chunk1_size);
     fclose(fp);
     exit(EXIT_FAILURE);
 }
@@ -811,11 +805,20 @@ bool load_track(int track_idx)
     open_music_file(music_files[track_idx]); // open_music_file handles its own errors/exit
 
     // Reconfigure ALSA for the new track's parameters
-    if (!reconfigure_alsa_for_track()) {
-        app_log("ERROR", "Failed to reconfigure ALSA for new track: %s. Playback aborted for this track.", music_files[track_idx]);
-        // fclose(fp); // fp is handled by the next load_track or exit
-        // fp = NULL;
-        return false; // Critical failure, cannot proceed with this track
+    // If pcm_handle is already open (i.e., this is not the first track load),
+    // then reconfigure it for the new track's parameters.
+    // The first track's parameters will be used by main() to do the initial open & config.
+    if (pcm_handle != NULL) { // ADDED THIS CHECK
+        if (!reconfigure_alsa_for_track()) {
+            app_log("ERROR", "Failed to reconfigure ALSA for new track: %s. Playback aborted for this track.", music_files[track_idx]);
+            // fclose(fp); // fp is handled by the next load_track or exit
+            // fp = NULL;
+            return false; // Critical failure, cannot proceed with this track
+        }
+    } else {
+        // This is the first track load. Main will handle initial ALSA setup.
+        // Log this situation for clarity.
+        app_log("INFO", "Initial track load. ALSA setup will be performed by main() using this track's parameters.");
     }
 
     // Reset playback state for the new track
@@ -825,31 +828,54 @@ bool load_track(int track_idx)
     hpf_prev_output = 0.0f;   // Reset HPF state for new track
 
     // --- Re-initialize WSOLA for the new track if necessary ---
-    if (wsola_state != NULL)
+    if (wsola_state_L != NULL)
     {
-        wsola_destroy(&wsola_state); // Destroy existing state
+        wsola_destroy(&wsola_state_L);
+        wsola_state_L = NULL;
     }
-    // Attempt to init WSOLA if new track is compatible (S16_LE Mono)
-    // Note: `rate` and `pcm_format` should be updated by open_music_file and subsequent logic in main for the *first* track.
-    // For subsequent tracks, `wav_header` is updated by open_music_file. We need to use these fresh values.
-    if (wav_header.audio_format == 1 && wav_header.bits_per_sample == 16 && wav_header.num_channels == 1)
-    { // PCM S16_LE MONO
-        // Use current_speed_idx which holds the user's desired speed setting.
-        // `rate` for ALSA might differ slightly from `wav_header.sample_rate` due to `set_rate_near`.
-        // It's crucial WSOLA uses the actual sample rate of the data it processes.
-        // Assuming `wav_header.sample_rate` is the true rate of the file data before any ALSA adjustments.
-        if (!wsola_init(&wsola_state, wav_header.sample_rate, wav_header.num_channels, 
+    if (wsola_state_R != NULL)
+    {
+        wsola_destroy(&wsola_state_R);
+        wsola_state_R = NULL;
+    }
+
+    // Attempt to init WSOLA if new track is compatible (S16_LE Mono or Stereo)
+    if (wav_header.audio_format == 1 && wav_header.bits_per_sample == 16 && 
+        (wav_header.num_channels == 1 || wav_header.num_channels == 2))
+    { 
+        app_log("INFO", "Track is S16_LE %s. Initializing WSOLA.", wav_header.num_channels == 1 ? "Mono" : "Stereo");
+        // Initialize Left channel (or Mono)
+        if (!wsola_init(&wsola_state_L, wav_header.sample_rate, 1, // WSOLA instances are always mono internally
                         PLAYBACK_SPEED_FACTORS[current_speed_idx],
                         DEFAULT_ANALYSIS_FRAME_MS, DEFAULT_OVERLAP_PERCENTAGE, DEFAULT_SEARCH_WINDOW_MS))
         {
-            app_log("ERROR", "Failed to re-initialize WSOLA for new track. Pitch-preserving speed control disabled for this track.");
+            app_log("ERROR", "Failed to initialize WSOLA for Left/Mono channel. Pitch-preserving speed control disabled.");
+            wsola_state_L = NULL; // Ensure it's null on failure
+        }
+
+        if (wav_header.num_channels == 2) // If stereo, initialize Right channel
+        {
+            if (!wsola_init(&wsola_state_R, wav_header.sample_rate, 1, // WSOLA instances are always mono internally
+                            PLAYBACK_SPEED_FACTORS[current_speed_idx],
+                            DEFAULT_ANALYSIS_FRAME_MS, DEFAULT_OVERLAP_PERCENTAGE, DEFAULT_SEARCH_WINDOW_MS))
+            {
+                app_log("ERROR", "Failed to initialize WSOLA for Right channel. Pitch-preserving speed control disabled for stereo.");
+                wsola_state_R = NULL; // Ensure it's null on failure
+                // If Right channel fails for stereo, arguably Left should also be disabled for consistent processing
+                if (wsola_state_L != NULL) {
+                    wsola_destroy(&wsola_state_L);
+                    wsola_state_L = NULL;
+                    app_log("INFO", "Disabled Left WSOLA instance as Right channel init failed for stereo.");
+                }
+            }
         }
     }
     else
     {
-        app_log("INFO", "New track is not S16_LE Mono. WSOLA disabled for this track. Format: %d, Channels: %d, Bits: %d", 
+        app_log("INFO", "New track is not S16_LE Mono/Stereo. WSOLA disabled. Format: %d, Channels: %d, Bits: %d", 
                 wav_header.audio_format, wav_header.num_channels, wav_header.bits_per_sample);
-        wsola_state = NULL; // Ensure it remains NULL
+        wsola_state_L = NULL;
+        wsola_state_R = NULL;
     }
 
     // Critical: Re-check and apply ALSA parameters if they can change per track
@@ -1107,22 +1133,10 @@ int main(int argc, char *argv[])
     }
 
     // --- Initialize WSOLA --- 
-    // WSOLA currently supports S16_LE Mono only.
-    if (pcm_format == SND_PCM_FORMAT_S16_LE && wav_header.num_channels == 1)
-    {
-        if (!wsola_init(&wsola_state, rate, wav_header.num_channels, 
-                        PLAYBACK_SPEED_FACTORS[current_speed_idx],
-                        DEFAULT_ANALYSIS_FRAME_MS, DEFAULT_OVERLAP_PERCENTAGE, DEFAULT_SEARCH_WINDOW_MS))
-        {
-            app_log("ERROR", "Failed to initialize WSOLA. Pitch-preserving speed control will be disabled.");
-            // wsola_state will be NULL, subsequent checks for wsola_state will bypass it.
-        }
-    }
-    else
-    {
-        app_log("INFO", "WSOLA pitch-preserving speed control currently requires S16_LE Mono. Format: %s, Channels: %d. Using simple speed change.", snd_pcm_format_name(pcm_format), wav_header.num_channels);
-        wsola_state = NULL; // Ensure it's NULL if not compatible
-    }
+    // WSOLA initialization is now handled within load_track to ensure it's re-initialized
+    // correctly for each track's parameters (sample rate, channels).
+    // The initial call to load_track above will have already initialized WSOLA if applicable.
+    // So, the block below that was here is removed.
 
     debug_msg(snd_pcm_hw_params_malloc(&hw_params), "分配snd_pcm_hw_params_t结构体");
     pcm_name = strdup(sound_card_name);
@@ -1339,16 +1353,19 @@ int main(int argc, char *argv[])
                     app_log("INFO", "Playback speed: %.1fx", new_speed);
                     if (use_wsola_for_speed_control)
                     {
-                        if (wsola_state)
+                        if (wsola_state_L) // Update Left channel (or mono)
                         {
-                            wsola_state->current_speed_factor = new_speed;
-                            // Update the synthesis hop samples immediately when speed changes
-                            // For slower speeds (< 1.0), synthesis_hop should be LARGER than analysis_hop
-                            // For faster speeds (> 1.0), synthesis_hop should be SMALLER than analysis_hop
-                            int new_hop = (int)round(wsola_state->analysis_hop_samples / new_speed);
-                            if (new_hop <= 0)
-                                new_hop = 1; // Safety check for very high speeds
-                            wsola_state->synthesis_hop_samples = new_hop;
+                            wsola_state_L->current_speed_factor = new_speed;
+                            int new_hop_L = (int)round(wsola_state_L->analysis_hop_samples / new_speed);
+                            if (new_hop_L <= 0) new_hop_L = 1;
+                            wsola_state_L->synthesis_hop_samples = new_hop_L;
+                        }
+                        if (wsola_state_R) // Update Right channel if stereo and initialized
+                        {
+                            wsola_state_R->current_speed_factor = new_speed;
+                            int new_hop_R = (int)round(wsola_state_R->analysis_hop_samples / new_speed);
+                            if (new_hop_R <= 0) new_hop_R = 1;
+                            wsola_state_R->synthesis_hop_samples = new_hop_R;
                         }
                     }
                     else
@@ -1371,16 +1388,19 @@ int main(int argc, char *argv[])
                     app_log("INFO", "Playback speed: %.1fx", new_speed);
                     if (use_wsola_for_speed_control)
                     {
-                        if (wsola_state)
+                        if (wsola_state_L) // Update Left channel (or mono)
                         {
-                            wsola_state->current_speed_factor = new_speed;
-                            // Update the synthesis hop samples immediately when speed changes
-                            // For slower speeds (< 1.0), synthesis_hop should be LARGER than analysis_hop
-                            // For faster speeds (> 1.0), synthesis_hop should be SMALLER than analysis_hop
-                            int new_hop = (int)round(wsola_state->analysis_hop_samples / new_speed);
-                            if (new_hop <= 0)
-                                new_hop = 1; // Safety check for very high speeds
-                            wsola_state->synthesis_hop_samples = new_hop;
+                            wsola_state_L->current_speed_factor = new_speed;
+                            int new_hop_L = (int)round(wsola_state_L->analysis_hop_samples / new_speed);
+                            if (new_hop_L <= 0) new_hop_L = 1;
+                            wsola_state_L->synthesis_hop_samples = new_hop_L;
+                        }
+                        if (wsola_state_R) // Update Right channel if stereo and initialized
+                        {
+                            wsola_state_R->current_speed_factor = new_speed;
+                            int new_hop_R = (int)round(wsola_state_R->analysis_hop_samples / new_speed);
+                            if (new_hop_R <= 0) new_hop_R = 1;
+                            wsola_state_R->synthesis_hop_samples = new_hop_R;
                         }
                     }
                     else
@@ -1548,49 +1568,111 @@ int main(int argc, char *argv[])
         // 2. The WSOLA state exists (initialized successfully)
         // 3. Format is S16_LE mono (supported format)
         // 4. Speed is not 1.0x (no need to process for normal speed)
-        bool use_wsola = (use_wsola_for_speed_control && 
-                         wsola_state != NULL && 
-                         pcm_format == SND_PCM_FORMAT_S16_LE && 
-                         wav_header.num_channels == 1 &&
-                         fabs(current_speed - 1.0) >= 1e-6);
+        bool use_wsola_processing = (use_wsola_for_speed_control &&
+                                   pcm_format == SND_PCM_FORMAT_S16_LE &&
+                                   fabs(current_speed - 1.0) >= 1e-6 &&
+                                   ((wav_header.num_channels == 1 && wsola_state_L != NULL) || 
+                                    (wav_header.num_channels == 2 && wsola_state_L != NULL && wsola_state_R != NULL)));
 
-        if (use_wsola)
+        if (use_wsola_processing)
         {
-            DBG("MainLoop: Using WSOLA for speed %.2fx", current_speed);
-            // WSOLA Path (Pitch Preserving)
-            // Estimate max possible output samples from WSOLA for this input chunk
-            // Max output = input_samples / min_speed_factor (e.g., 0.5x)
-            // A safe buffer: num_source_samples_for_speed_change / 0.5 (i.e., * 2) + some margin for frame alignment.
-            int max_wsola_output_samples = (int)((double)num_source_samples_for_speed_change / PLAYBACK_SPEED_FACTORS[0]) + wsola_state->analysis_frame_samples;
-            resampled_audio_buffer_s16_this_iter = (short *)malloc(max_wsola_output_samples * sizeof(short));
+            DBG("MainLoop: Using WSOLA for speed %.2fx, Channels: %d", current_speed, wav_header.num_channels);
+
+            // Estimate max possible output samples for WSOLA for this input chunk.
+            // This estimation is for the total number of samples (mono or interleaved stereo).
+            int max_total_wsola_output_samples = (int)((double)num_source_samples_for_speed_change / PLAYBACK_SPEED_FACTORS[0]) + 
+                                               (wsola_state_L ? wsola_state_L->analysis_frame_samples : (wsola_state_R ? wsola_state_R->analysis_frame_samples : 0));
+            
+            if (resampled_audio_buffer_s16_this_iter != NULL) { // Should be NULL at this point per loop logic
+                free(resampled_audio_buffer_s16_this_iter);
+                resampled_audio_buffer_s16_this_iter = NULL;
+            }
+            resampled_audio_buffer_s16_this_iter = (short *)malloc(max_total_wsola_output_samples * sizeof(short));
 
             if (resampled_audio_buffer_s16_this_iter == NULL)
             {
                 app_log("ERROR", "Failed to allocate memory for WSOLA output buffer. Using simple speed change for this chunk.");
-                use_wsola = false; // Fallback
+                // Fallback will be handled by later logic if buffer_for_alsa_is_resampled_output is false
             }
             else
             {
-                int wsola_output_count_samples = wsola_process(wsola_state,
-                                                       source_buffer_for_speed_change_s16, 
-                                                       num_source_samples_for_speed_change, 
-                                                               resampled_audio_buffer_s16_this_iter,
-                                                       max_wsola_output_samples);
-                if (wsola_output_count_samples > 0)
+                if (wav_header.num_channels == 1 && wsola_state_L != NULL)
                 {
-                    buffer_for_alsa = (unsigned char *)resampled_audio_buffer_s16_this_iter;
-                    frames_for_alsa = wsola_output_count_samples / wav_header.num_channels;
-                    buffer_for_alsa_is_resampled_output = true;
+                    // MONO processing
+                    int wsola_output_count_samples_mono = wsola_process(wsola_state_L,
+                                                                   source_buffer_for_speed_change_s16, 
+                                                                   num_source_samples_for_speed_change, 
+                                                                   resampled_audio_buffer_s16_this_iter, // Output directly to final buffer
+                                                                   max_total_wsola_output_samples);
+                    if (wsola_output_count_samples_mono > 0)
+                    {
+                        buffer_for_alsa = (unsigned char *)resampled_audio_buffer_s16_this_iter;
+                        frames_for_alsa = wsola_output_count_samples_mono; // num_channels is 1
+                        buffer_for_alsa_is_resampled_output = true;
+                    }
+                    else
+                    {
+                        app_log("WARNING", "WSOLA MONO processing returned 0 samples.");
+                        // Fallback will be handled
+                    }
                 }
-                else
+                else if (wav_header.num_channels == 2 && wsola_state_L != NULL && wsola_state_R != NULL)
                 {
-                    // No output from WSOLA, or error
-                    app_log("WARNING", "WSOLA processing returned 0 samples.");
-                    buffer_for_alsa = NULL; // No data to play
-                    frames_for_alsa = 0;
-                    free(resampled_audio_buffer_s16_this_iter); // Free the buffer we allocated
+                    // STEREO processing
+                    int num_source_frames = num_source_samples_for_speed_change / 2;
+                    int max_mono_output_samples = max_total_wsola_output_samples / 2; // Max output per channel
+
+                    short *mono_input_L = (short *)malloc(num_source_frames * sizeof(short));
+                    short *mono_input_R = (short *)malloc(num_source_frames * sizeof(short));
+                    short *mono_output_L = (short *)malloc(max_mono_output_samples * sizeof(short));
+                    short *mono_output_R = (short *)malloc(max_mono_output_samples * sizeof(short));
+
+                    if (!mono_input_L || !mono_input_R || !mono_output_L || !mono_output_R)
+                    {
+                        app_log("ERROR", "Failed to allocate memory for stereo WSOLA temp buffers.");
+                        free(mono_input_L); free(mono_input_R); free(mono_output_L); free(mono_output_R);
+                        // Fallback will be handled
+                    }
+                    else
+                    {
+                        // Deinterleave
+                        for (int i = 0; i < num_source_frames; ++i) {
+                            mono_input_L[i] = source_buffer_for_speed_change_s16[i * 2 + 0];
+                            mono_input_R[i] = source_buffer_for_speed_change_s16[i * 2 + 1];
+                        }
+
+                        int output_samples_L = wsola_process(wsola_state_L, mono_input_L, num_source_frames, mono_output_L, max_mono_output_samples);
+                        int output_samples_R = wsola_process(wsola_state_R, mono_input_R, num_source_frames, mono_output_R, max_mono_output_samples);
+
+                        if (output_samples_L > 0 && output_samples_R > 0)
+                        {
+                            int output_frames = (output_samples_L < output_samples_R) ? output_samples_L : output_samples_R;
+                            if (output_samples_L != output_samples_R) {
+                                app_log("WARNING", "WSOLA Stereo: L/R output sample count mismatch (%d vs %d). Using %d frames.", output_samples_L, output_samples_R, output_frames);
+                            }
+
+                            // Interleave into resampled_audio_buffer_s16_this_iter
+                            for (int i = 0; i < output_frames; ++i) {
+                                resampled_audio_buffer_s16_this_iter[i * 2 + 0] = mono_output_L[i];
+                                resampled_audio_buffer_s16_this_iter[i * 2 + 1] = mono_output_R[i];
+                            }
+                            buffer_for_alsa = (unsigned char *)resampled_audio_buffer_s16_this_iter;
+                            frames_for_alsa = output_frames;
+                            buffer_for_alsa_is_resampled_output = true;
+                        }
+                        else
+                        {
+                            app_log("WARNING", "WSOLA STEREO processing returned 0 samples for one or both channels.");
+                            // Fallback will be handled
+                        }
+                        free(mono_input_L); free(mono_input_R); free(mono_output_L); free(mono_output_R);
+                    }
+                }
+                
+                if (!buffer_for_alsa_is_resampled_output && resampled_audio_buffer_s16_this_iter != NULL) {
+                     // WSOLA attempted but failed to produce output, free the buffer to prevent it being used by simple speed as if it contains valid data.
+                    free(resampled_audio_buffer_s16_this_iter);
                     resampled_audio_buffer_s16_this_iter = NULL;
-                    buffer_for_alsa_is_resampled_output = false;
                 }
             }
         }
@@ -1611,7 +1693,7 @@ int main(int argc, char *argv[])
                 {
                     size_t resampled_buffer_size_bytes = target_num_output_samples * sizeof(short);
                     // Ensure resampled_audio_buffer_s16_this_iter is used here if not by WSOLA
-                    if (resampled_audio_buffer_s16_this_iter != NULL && !use_wsola)
+                    if (resampled_audio_buffer_s16_this_iter != NULL && !use_wsola_processing)
                     {
                         // This case should ideally not happen if WSOLA failed and freed, then use_wsola becomes false.
                         // But as a safeguard, if it's already alloc'd and use_wsola is false, free it before re-alloc for simple speed.
@@ -1627,7 +1709,7 @@ int main(int argc, char *argv[])
                     { // Only malloc if not already available from a failed WSOLA attempt that should have freed
                         resampled_audio_buffer_s16_this_iter = (short *)malloc(resampled_buffer_size_bytes);
                     }
-                    else if (use_wsola)
+                    else if (use_wsola_processing)
                     {
                         // This means WSOLA ran, alloc'd, but produced 0 output. That buffer should be freed by WSOLA logic,
                         // or handled carefully here. For now, assume if use_wsola was true and we are here, buffer_for_alsa_is_resampled_output is false.
@@ -1881,9 +1963,13 @@ playback_end:
         free(music_files);
     }
 
-    if (wsola_state != NULL)
+    if (wsola_state_L != NULL)
     {
-        wsola_destroy(&wsola_state);
+        wsola_destroy(&wsola_state_L);
+    }
+    if (wsola_state_R != NULL) // Destroy Right channel state if it exists
+    {
+        wsola_destroy(&wsola_state_R);
     }
 
     app_log("INFO", "MusicApp exiting normally.");
@@ -1955,35 +2041,6 @@ static float calculate_normalized_cross_correlation(const short *segment1, const
     }
     mean1 /= length;
     mean2 /= length;
-
-    // Check for identical segments (would cause perfect 1.0 correlation)
-    // This helps avoid the artificial exact 1.0 readings we're seeing
-    bool segments_identical = true;
-    for (int i = 0; i < length && segments_identical; ++i)
-    {
-        if (segment1[i] != segment2[i])
-        {
-            segments_identical = false;
-        }
-    }
-    
-    // If segments are truly identical and not just silence, still allow a high but not perfect correlation
-    if (segments_identical)
-    {
-        // Check if it's meaningful audio or just silence
-        double energy = 0.0;
-        for (int i = 0; i < length; ++i)
-        {
-            energy += (double)segment1[i] * segment1[i];
-        }
-        // If it's true silence, correlation is meaningless
-        if (energy < 100.0 * length)
-        {
-            return 0.0f;
-        }
-        // Otherwise, return very high but not perfect correlation to avoid detection issues
-        return 0.9999f;
-    }
 
     // The internal triangular windowing has been removed.
     // Correlation is now performed on the (potentially pre-windowed by caller) mean-centered segments.
@@ -2102,17 +2159,16 @@ static long long find_best_match_segment(
     // For first frames (startup case), handle specially
     if (state->total_output_samples_generated == 0)
     {
-        // First frame - check only 0 offset (traditional phase vocoder approach for start)
-        if (get_segment_from_ring_buffer(state, ideal_search_center_ring_idx, N_o, candidate_segment))
-        {
-            // First frame should always be position 0 for predictability
-            max_correlation_float = 0.9999f; // High but not perfect correlation
-            max_correlation = 999900;        // 0.9999 scaled
-            *best_segment_start_offset_from_ideal_center_ptr = 0;
-            match_found = true;
-            previous_best_offset = 0;
-            previous_correlation = 0.9999f;
-        }
+        // First frame: always choose offset 0. 
+        // The correlation with the initial silent output_overlap_add_buffer is meaningless.
+        // Set a neutral/low previous_correlation for the next frame
+        // to avoid unduly biasing its search based on this artificial first step.
+        app_log("DEBUG", "find_best_match: First frame (total_out_gen == 0), forcing offset=0 and neutral prev_corr.");
+        max_correlation_float = 0.0f; // Neutral correlation, as it wasn't a real match
+        max_correlation = 0;          // Scaled version
+        *best_segment_start_offset_from_ideal_center_ptr = 0;
+        match_found = true; // We are selecting a segment
+        // previous_best_offset and previous_correlation will be set from these values at the end of the function.
     } 
     else if (S_w <= 0)
     {
@@ -2310,6 +2366,10 @@ static long long find_best_match_segment(
             // to previous_correlation for the next frame.
             // max_correlation_float = 0.3f;
             // max_correlation = 300000; // 0.3 scaled
+
+            // Assign a penalized correlation value to reflect fallback, stabilizing next frame's heuristics
+            max_correlation_float = 0.2f; 
+            max_correlation = 200000; // 0.2 scaled
         }
     }
     else
@@ -2571,24 +2631,24 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
             (int)((state->next_ideal_input_frame_start_sample_offset - state->input_ring_buffer_stream_start_offset + state->input_buffer_capacity)) % state->input_buffer_capacity;
 
         int best_offset_from_ideal_center = 0;
-        long long correlation = find_best_match_segment(state, 
+        long long correlation_scaled = find_best_match_segment(state, 
                                                 state->output_overlap_add_buffer, 
                                                 ideal_search_center_ring_idx, 
                                                 &best_offset_from_ideal_center);
 
         // Check if find_best_match_segment indicated an error or no valid segment found
-        if (correlation == -LLONG_MAX)
+        if (correlation_scaled == -LLONG_MAX)
         {
-            app_log("WARNING", "WSOLA: find_best_match_segment returned error/no match. Using zero offset. Correlation: %lld", correlation);
+            app_log("WARNING", "WSOLA: find_best_match_segment returned error/no match. Using zero offset. Correlation: %lld", correlation_scaled);
             best_offset_from_ideal_center = 0; // Ensure fallback to zero offset
         }
-        else if (correlation == 0 && loop_iterations <= 1)
-        { // Check loop_iterations instead of total_output_samples_generated
-            // If correlation is zero AND we are in the very first iteration of this wsola_process call
-            // (output overlap buffer was definitely silent from init or previous call's end),
-            // it's better to stick to the ideal segment (offset 0).
-            app_log("DEBUG", "WSOLA: Correlation is 0 during initial loop iter (iter: %d). Forcing offset to 0 from %d.",
-                    loop_iterations, best_offset_from_ideal_center);
+        // If this is the very first frame processing (output buffer is still initial silence)
+        // and the correlation is extremely low (candidate likely silent too),
+        // then forcing offset 0 is safer than trusting a potentially arbitrary offset from NCC with silence.
+        else if (state->total_output_samples_generated == 0 && abs(correlation_scaled) < 10000 /* Corresponds to float correlation approx < 0.01 */) 
+        {
+            app_log("DEBUG", "WSOLA: Correlation very low during initial frame (total_out_gen: %lld, corr_scaled: %lld). Forcing offset to 0 from %d.",
+                    state->total_output_samples_generated, correlation_scaled, best_offset_from_ideal_center);
             best_offset_from_ideal_center = 0;
         }
 
@@ -2669,7 +2729,11 @@ int wsola_process(WSOLA_State *state, const short *input_samples, int num_input_
 
         // Update input stream pointers for time scaling.
         // Advance by H_a (which is N_o) scaled by the speed factor.
-        state->next_ideal_input_frame_start_sample_offset += (int)round((double)H_a / state->current_speed_factor);
+        app_log("DEBUG", "WSOLA_ADVANCE: H_a=%d, speed_factor=%.4f, adv_raw=%.4f, adv_int=%d", 
+                H_a, state->current_speed_factor, 
+                (double)H_a * state->current_speed_factor, 
+                (int)round((double)H_a * state->current_speed_factor));
+        state->next_ideal_input_frame_start_sample_offset += (int)round((double)H_a * state->current_speed_factor);
         state->total_input_samples_processed = state->next_ideal_input_frame_start_sample_offset; // Approximation
 
         // Discard old data from ring buffer (logic for this remains the same)
