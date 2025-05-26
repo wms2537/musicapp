@@ -432,48 +432,31 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // 0.5x使用固定间隔的方法，确保均匀拉伸
-        int grain_size = 128;
-        int overlap_size = 32;
-        int fixed_hop_input = 64; // 固定输入跳跃，确保一致的0.5x速度
-        int fixed_hop_output = 96; // 固定输出跳跃
+        // 0.5x使用最简单的重复方法，避免电音和失真
+        float input_pos_float = 0.0f;
+        int output_pos = 0;
         
-        input_pos = 0;
-        output_pos = 0;
-        
-        while (input_pos + grain_size < input_length && output_pos + grain_size < max_output_length) {
-            // 不搜索，使用固定间隔以保证均匀时间拉伸
-            int best_pos = input_pos;
+        // 简单但有效：每个输入样本输出两次，保持音调
+        while ((int)input_pos_float < input_length && output_pos < max_output_length - 1) {
+            int input_pos = (int)input_pos_float;
             
-            // 复制grain并应用交叉淡化
             for (int ch = 0; ch < num_channels; ch++) {
-                for (int i = 0; i < grain_size; i++) {
-                    int sample_idx = best_pos + i * num_channels + ch;
-                    int out_idx = output_pos + i * num_channels + ch;
+                if (input_pos + ch < input_length) {
+                    short sample = input[input_pos + ch];
                     
-                    if (sample_idx < input_length && out_idx < max_output_length) {
-                        short new_sample = input[sample_idx];
-                        
-                        // 在重叠区域应用平滑过渡
-                        if (output_pos > 0 && i < overlap_size) {
-                            float t = (float)i / overlap_size;
-                            float blend = t; // 简单线性混合，避免复杂计算
-                            
-                            int old_idx = out_idx;
-                            if (old_idx < max_output_length) {
-                                short old_sample = output[old_idx];
-                                output[out_idx] = (short)(old_sample * (1.0f - blend) + new_sample * blend);
-                            }
-                        } else {
-                            output[out_idx] = new_sample;
-                        }
+                    // 每个样本输出两次，实现0.5x速度但保持音调
+                    if (output_pos < max_output_length) {
+                        output[output_pos] = sample;
+                        output_pos++;
+                    }
+                    if (output_pos < max_output_length) {
+                        output[output_pos] = sample;
+                        output_pos++;
                     }
                 }
             }
             
-            // 使用固定间隔确保均匀的0.5x速度
-            input_pos += fixed_hop_input; // 始终前进64样本 (0.5x)
-            output_pos += fixed_hop_output; // 始终前进96样本
+            input_pos_float += num_channels; // 前进一个完整帧
         }
         
         *output_length = output_pos;
