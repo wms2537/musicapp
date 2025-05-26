@@ -432,19 +432,20 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // 0.5x使用改进的WSOLA，减少杂音
-        int frame_size = 512;    // 较小frame减少延迟和杂音
-        int hop_size = 128;      // 输入跳跃
-        int overlap_size = 64;   // 较小overlap减少杂音
+        // 0.5x使用固定步长的WSOLA，确保平滑时间流逝
+        int analysis_hop = 256;    // 输入分析步长
+        int synthesis_hop = 512;   // 输出合成步长（2倍长度实现0.5x）
+        int frame_size = 512;      // 分析窗口大小
+        int overlap_size = 128;    // 重叠大小
         
-        // 使用cosine窗而不是三角窗，更平滑
-        static float cosine_window[64];
-        static bool cos_window_init = false;
-        if (!cos_window_init) {
+        // 汉宁窗用于overlap
+        static float hanning_window[128];
+        static bool hann_init = false;
+        if (!hann_init) {
             for (int i = 0; i < overlap_size; i++) {
-                cosine_window[i] = 0.5f * (1.0f - cosf(M_PI * i / (overlap_size - 1)));
+                hanning_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (overlap_size - 1)));
             }
-            cos_window_init = true;
+            hann_init = true;
         }
         
         int input_pos = 0;
@@ -453,58 +454,55 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
         // 清理输出缓冲区
         memset(output, 0, max_output_length * sizeof(short));
         
-        while (input_pos + frame_size < input_length && output_pos + frame_size * 2 < max_output_length) {
-            // 简化的相似性搜索，减少计算复杂度
+        while (input_pos + frame_size < input_length && output_pos + synthesis_hop < max_output_length) {
+            // 寻找最佳匹配位置（限制搜索范围）
             int best_offset = 0;
-            float min_diff = 1e10f;
+            float best_correlation = -1.0f;
             
-            // 只搜索小范围，减少杂音
-            for (int offset = 0; offset < 32 && input_pos + offset + overlap_size < input_length; offset++) {
-                float diff = 0.0f;
+            for (int offset = 0; offset < 64 && input_pos + offset + frame_size < input_length; offset++) {
+                float correlation = 0.0f;
+                // 只计算overlap区域的相关性
                 for (int i = 0; i < overlap_size; i++) {
                     for (int ch = 0; ch < num_channels; ch++) {
                         int idx1 = input_pos + offset + i * num_channels + ch;
-                        int idx2 = input_pos + i * num_channels + ch;
-                        if (idx1 < input_length && idx2 < input_length) {
-                            float d = input[idx1] - input[idx2];
-                            diff += d * d;
+                        if (output_pos + i * num_channels + ch < max_output_length && idx1 < input_length) {
+                            // 与上一个输出块的尾部比较
+                            correlation += abs(input[idx1]) * abs(output[output_pos + i * num_channels + ch]);
                         }
                     }
                 }
                 
-                if (diff < min_diff) {
-                    min_diff = diff;
+                if (correlation > best_correlation) {
+                    best_correlation = correlation;
                     best_offset = offset;
                 }
             }
             
-            // 应用frame with overlap-add
+            // 复制当前frame到输出
             int src_pos = input_pos + best_offset;
-            
-            for (int i = 0; i < frame_size; i++) {
+            for (int i = 0; i < frame_size && src_pos + i * num_channels < input_length; i++) {
                 for (int ch = 0; ch < num_channels; ch++) {
                     int in_idx = src_pos + i * num_channels + ch;
                     int out_idx = output_pos + i * num_channels + ch;
                     
-                    if (in_idx < input_length && out_idx < max_output_length) {
-                        float sample = input[in_idx];
+                    if (out_idx < max_output_length) {
+                        float new_sample = input[in_idx];
                         
-                        // 只在overlap区域应用窗函数
+                        // 在overlap区域进行混合
                         if (i < overlap_size && output[out_idx] != 0) {
-                            // 使用cosine窗进行平滑混合
                             float existing = output[out_idx];
-                            float weight = cosine_window[i];
-                            sample = existing * (1.0f - weight) + sample * weight;
+                            float blend_weight = hanning_window[i];
+                            new_sample = existing * (1.0f - blend_weight) + new_sample * blend_weight;
                         }
                         
-                        output[out_idx] = (short)sample;
+                        output[out_idx] = (short)new_sample;
                     }
                 }
             }
             
-            // 对于0.5x：输入跳跃小，输出跳跃大
-            input_pos += hop_size;
-            output_pos += hop_size * 2;
+            // 固定步长确保连续性：0.5x意味着输出步长是输入步长的2倍
+            input_pos += analysis_hop;
+            output_pos += synthesis_hop;
         }
         
         *output_length = output_pos;
