@@ -9,10 +9,14 @@
 #include <alsa/asoundlib.h>
 #include <fcntl.h> // For non-blocking stdin
 #include <errno.h> // For snd_strerror(errno)
-#include <math.h>  // For sqrt, pow if we use more advanced curves later
+#include <math.h>  // For sqrt, pow, cosf, fabsf
 #include <time.h>  // For logging timestamps
 #include <signal.h> // For signal handling
 #include "const.h"
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 // --- ALSA Mixer Globals for Volume Control ---
 snd_mixer_t *mixer_handle = NULL;
@@ -379,7 +383,7 @@ void open_music_file(const char *path_name) {
 }
 
 // FIR滤波器实现
-// 简化的时间拉伸算法 - 减少机器人音效
+// 保持音调的时间拉伸算法 - PSOLA启发的方法
 void apply_time_stretch(short* input, short* output, int input_length, int* output_length, float speed_factor, int max_output_length) {
     *output_length = 0;
     
@@ -393,62 +397,69 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
         return;
     }
     
-    // 使用简单的线性插值方法，减少伪影
-    float input_pos_float = 0.0f;
+    int num_channels = wav_header.num_channels;
+    int frame_size = STRETCH_FRAME_SIZE;
+    int hop_analysis = (int)(frame_size * speed_factor); // 分析跳跃
+    int hop_synthesis = frame_size / 2; // 合成跳跃（固定，保持音调）
+    
+    // 汉宁窗函数
+    static float hanning_window[STRETCH_FRAME_SIZE];
+    static bool window_initialized = false;
+    if (!window_initialized) {
+        for (int i = 0; i < frame_size; i++) {
+            hanning_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (frame_size - 1)));
+        }
+        window_initialized = true;
+    }
+    
+    int input_pos = 0;
     int output_pos = 0;
     
-    // 对于慢速播放(0.5x)，使用双线性插值策略
-    if (speed_factor < 1.0f) {
-        // 慢速播放：双线性插值增加样本
-        int num_channels = wav_header.num_channels;
-        
-        while (output_pos < max_output_length - num_channels && (int)input_pos_float < input_length - num_channels) {
-            int input_pos = (int)input_pos_float;
-            float frac = input_pos_float - input_pos;
-            
-            // 确保不越界
-            if (input_pos + num_channels >= input_length) break;
-            
-            if (num_channels == 1) {
-                // 单声道：简单线性插值
-                short sample1 = input[input_pos];
-                short sample2 = input[input_pos + 1];
-                short interpolated = (short)(sample1 * (1.0f - frac) + sample2 * frac);
-                output[output_pos] = interpolated;
-                output_pos++;
-            } else {
-                // 立体声：对每个声道进行双线性插值
-                for (int ch = 0; ch < num_channels; ch++) {
-                    if (input_pos + ch + num_channels < input_length) {
-                        // 当前帧的样本
-                        short sample1_ch = input[input_pos + ch];
-                        // 下一帧的样本
-                        short sample2_ch = input[input_pos + ch + num_channels];
-                        
-                        // 双线性插值计算
-                        float interpolated_float = sample1_ch * (1.0f - frac) + sample2_ch * frac;
-                        
-                        // 应用轻微的低通滤波减少高频噪声
-                        float filtered = interpolated_float * 0.7f + interpolation_prev_samples[ch] * 0.3f;
-                        interpolation_prev_samples[ch] = (short)interpolated_float;
-                        
-                        output[output_pos] = (short)filtered;
-                    } else {
-                        output[output_pos] = input[input_pos + ch];
-                    }
-                    output_pos++;
+    // 清零输出缓冲区
+    for (int i = 0; i < max_output_length; i++) {
+        output[i] = 0;
+    }
+    
+    while (input_pos + frame_size < input_length && output_pos + frame_size < max_output_length) {
+        // 对每个声道分别处理
+        for (int ch = 0; ch < num_channels; ch++) {
+            // 提取当前帧（带窗函数）
+            float windowed_frame[STRETCH_FRAME_SIZE];
+            for (int i = 0; i < frame_size; i++) {
+                int sample_idx = input_pos + i * num_channels + ch;
+                if (sample_idx < input_length) {
+                    windowed_frame[i] = input[sample_idx] * hanning_window[i];
+                } else {
+                    windowed_frame[i] = 0.0f;
                 }
             }
             
-            input_pos_float += speed_factor;
+            // 重叠相加到输出
+            for (int i = 0; i < frame_size; i++) {
+                int out_idx = output_pos + i * num_channels + ch;
+                if (out_idx < max_output_length) {
+                    // 应用窗函数并累加
+                    float contribution = windowed_frame[i] * hanning_window[i];
+                    output[out_idx] += (short)contribution;
+                }
+            }
         }
-    } else {
-        // 快速播放：跳过样本
-        while (output_pos < max_output_length && (int)input_pos_float < input_length) {
-            output[output_pos] = input[(int)input_pos_float];
-            
-            input_pos_float += speed_factor;
-            output_pos++;
+        
+        input_pos += hop_analysis;
+        output_pos += hop_synthesis;
+    }
+    
+    // 归一化输出以避免过载
+    float max_val = 0.0f;
+    for (int i = 0; i < output_pos && i < max_output_length; i++) {
+        float val = fabsf((float)output[i]);
+        if (val > max_val) max_val = val;
+    }
+    
+    if (max_val > 32767.0f) {
+        float scale = 32767.0f / max_val;
+        for (int i = 0; i < output_pos && i < max_output_length; i++) {
+            output[i] = (short)(output[i] * scale);
         }
     }
     
@@ -861,6 +872,13 @@ int main(int argc, char *argv[]) {
 
     debug_msg(snd_pcm_hw_params_set_channels(pcm_handle, hw_params, wav_header.num_channels), "设置通道数");
     buffer_size = period_size * periods;
+    
+    // 确保不重复分配buff
+    if (buff != NULL) {
+        free(buff);
+        buff = NULL;
+    }
+    
     buff = (unsigned char *)malloc(buffer_size);
     if (buff == NULL) {
         fprintf(stderr, "Error: Failed to allocate memory for playback buffer.\n");
@@ -904,6 +922,7 @@ int main(int argc, char *argv[]) {
     unsigned char *filtered_buff = (unsigned char *)malloc(buffer_size);
     if (filtered_buff == NULL) {
         log_program_info("ERROR", "Failed to allocate filtered buffer");
+        if (buff) free(buff);
         exit(EXIT_FAILURE);
     }
     
@@ -911,7 +930,8 @@ int main(int argc, char *argv[]) {
     short* temp_samples = (short*)malloc(buffer_size * 2); // 2x size for safety
     if (temp_samples == NULL) {
         log_program_info("ERROR", "Failed to allocate temp_samples buffer");
-        free(filtered_buff);
+        if (filtered_buff) free(filtered_buff);
+        if (buff) free(buff);
         exit(EXIT_FAILURE);
     }
     
@@ -1047,8 +1067,14 @@ int main(int argc, char *argv[]) {
         }
     }
     
-    free(filtered_buff);
-    free(temp_samples);
+    if (filtered_buff) {
+        free(filtered_buff);
+        filtered_buff = NULL;
+    }
+    if (temp_samples) {
+        free(temp_samples);
+        temp_samples = NULL;
+    }
 
 playback_end:
     current_state = STOPPED;
@@ -1065,8 +1091,14 @@ playback_end:
     if (fp) fclose(fp);
     snd_pcm_close(pcm_handle);
     if (mixer_handle) { snd_mixer_close(mixer_handle); }
-    free(buff);
-    free(pcm_name);
+    if (buff) {
+        free(buff);
+        buff = NULL;
+    }
+    if (pcm_name) {
+        free(pcm_name);
+        pcm_name = NULL;
+    }
     
     if (log_file) {
         log_program_info("SHUTDOWN", "Music player shutting down");

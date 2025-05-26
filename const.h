@@ -42,8 +42,8 @@ snd_pcm_format_t pcm_format = 161;
 // 缓存大小
 #define BUF_LEN 1024
 //char buf[BUF_LEN];
-unsigned char *buff;
-unsigned char *buff1;
+unsigned char *buff = NULL;
+unsigned char *buff1 = NULL;
 
 
 // 周期数
