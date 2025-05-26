@@ -66,6 +66,9 @@ static short delay_buffer_right[FIR_TAP_NUM] = {0};
 static int delay_index_left = 0;
 static int delay_index_right = 0;
 
+// 时间拉伸插值的前一个样本存储
+static short interpolation_prev_samples[2] = {0, 0};
+
 // 时间拉伸缓冲区
 static short stretch_buffer[STRETCH_FRAME_SIZE * 2] = {0};
 static short overlap_buffer[STRETCH_OVERLAP_SIZE] = {0};
@@ -270,6 +273,23 @@ bool debug_msg(int result, const char *str) {
     return true;
 }
 
+// 重置音频处理状态
+void reset_audio_processing_state() {
+    // 清空FIR滤波器延迟缓冲区
+    memset(delay_buffer_left, 0, sizeof(delay_buffer_left));
+    memset(delay_buffer_right, 0, sizeof(delay_buffer_right));
+    delay_index_left = 0;
+    delay_index_right = 0;
+    
+    // 清空插值历史
+    interpolation_prev_samples[0] = 0;
+    interpolation_prev_samples[1] = 0;
+    
+    // 清空时间拉伸缓冲区
+    memset(stretch_buffer, 0, sizeof(stretch_buffer));
+    memset(overlap_buffer, 0, sizeof(overlap_buffer));
+}
+
 void open_music_file(const char *path_name) {
     if (fp != NULL) {
         fclose(fp);
@@ -353,6 +373,9 @@ void open_music_file(const char *path_name) {
     printf("Data ID: %.4s, Data Size: %u\n", wav_header.sub_chunk2_id, wav_header.sub_chunk2_size);
     printf("Data chunk starts at offset: %ld\n", data_chunk_offset);
     printf("-----------------------------------------\n");
+    
+    // 重置音频处理状态以避免静态变量污染
+    reset_audio_processing_state();
 }
 
 // FIR滤波器实现
@@ -374,22 +397,50 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     float input_pos_float = 0.0f;
     int output_pos = 0;
     
-    // 对于慢速播放(0.5x)，使用简单的重复/插值策略
+    // 对于慢速播放(0.5x)，使用双线性插值策略
     if (speed_factor < 1.0f) {
-        // 慢速播放：插值增加样本
-        while (output_pos < max_output_length && (int)input_pos_float < input_length - 1) {
+        // 慢速播放：双线性插值增加样本
+        int num_channels = wav_header.num_channels;
+        
+        while (output_pos < max_output_length - num_channels && (int)input_pos_float < input_length - num_channels) {
             int input_pos = (int)input_pos_float;
             float frac = input_pos_float - input_pos;
             
-            // 线性插值
-            short sample1 = input[input_pos];
-            short sample2 = input[input_pos + 1];
-            short interpolated = (short)(sample1 * (1.0f - frac) + sample2 * frac);
+            // 确保不越界
+            if (input_pos + num_channels >= input_length) break;
             
-            output[output_pos] = interpolated;
+            if (num_channels == 1) {
+                // 单声道：简单线性插值
+                short sample1 = input[input_pos];
+                short sample2 = input[input_pos + 1];
+                short interpolated = (short)(sample1 * (1.0f - frac) + sample2 * frac);
+                output[output_pos] = interpolated;
+                output_pos++;
+            } else {
+                // 立体声：对每个声道进行双线性插值
+                for (int ch = 0; ch < num_channels; ch++) {
+                    if (input_pos + ch + num_channels < input_length) {
+                        // 当前帧的样本
+                        short sample1_ch = input[input_pos + ch];
+                        // 下一帧的样本
+                        short sample2_ch = input[input_pos + ch + num_channels];
+                        
+                        // 双线性插值计算
+                        float interpolated_float = sample1_ch * (1.0f - frac) + sample2_ch * frac;
+                        
+                        // 应用轻微的低通滤波减少高频噪声
+                        float filtered = interpolated_float * 0.7f + interpolation_prev_samples[ch] * 0.3f;
+                        interpolation_prev_samples[ch] = (short)interpolated_float;
+                        
+                        output[output_pos] = (short)filtered;
+                    } else {
+                        output[output_pos] = input[input_pos + ch];
+                    }
+                    output_pos++;
+                }
+            }
             
             input_pos_float += speed_factor;
-            output_pos++;
         }
     } else {
         // 快速播放：跳过样本
