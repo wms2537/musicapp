@@ -493,7 +493,7 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
                 }
             }
             
-            input_pos = best_pos + grain_size - overlap_size; // 0.5x速度，考虑重叠
+            input_pos = best_pos + (grain_size - overlap_size) / 2; // 正确的0.5x速度
             output_pos += grain_size - overlap_size;
         }
         
