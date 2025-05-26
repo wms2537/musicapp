@@ -432,27 +432,37 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // 0.5x的特殊处理：使用更平滑的重叠和不同的增益
-        while (input_pos + frame_size < input_length && output_pos + frame_size < max_output_length) {
+        // 0.5x使用优化的重叠相加，减少伪影但保持音调
+        int smaller_frame = frame_size / 2; // 使用更小的帧256
+        int hop_syn_05 = smaller_frame / 4; // 64样本跳跃
+        int hop_ana_05 = hop_syn_05 / 2; // 32样本跳跃，实现0.5x
+        
+        input_pos = 0;
+        output_pos = 0;
+        
+        while (input_pos + smaller_frame < input_length && output_pos + smaller_frame < max_output_length) {
             for (int ch = 0; ch < num_channels; ch++) {
-                for (int i = 0; i < frame_size; i++) {
+                for (int i = 0; i < smaller_frame; i++) {
                     int sample_idx = input_pos + i * num_channels + ch;
                     int out_idx = output_pos + i * num_channels + ch;
                     
                     if (sample_idx < input_length && out_idx < max_output_length) {
-                        // 使用更平滑的窗函数混合
-                        float window_val = hanning_window[i];
+                        // 使用更温和的窗函数
+                        float window_val = hanning_window[i * 2]; // 映射到512窗口
                         float windowed_sample = input[sample_idx] * window_val;
                         
-                        // 使用较小的增益和平滑混合
-                        output[out_idx] += (short)(windowed_sample * 0.25f);
+                        // 使用更小的增益
+                        output[out_idx] += (short)(windowed_sample * 0.2f);
                     }
                 }
             }
             
-            input_pos += hop_analysis;
-            output_pos += hop_synthesis;
+            input_pos += hop_ana_05;
+            output_pos += hop_syn_05;
         }
+        
+        *output_length = output_pos;
+        return;
     } else {
         // 1.5x和2.0x的正常处理（保持不变）
         while (input_pos + frame_size < input_length && output_pos + frame_size < max_output_length) {
