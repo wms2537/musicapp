@@ -432,77 +432,47 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // 0.5x使用固定步长的WSOLA，确保平滑时间流逝
-        int analysis_hop = 256;    // 输入分析步长
-        int synthesis_hop = 512;   // 输出合成步长（2倍长度实现0.5x）
-        int frame_size = 512;      // 分析窗口大小
-        int overlap_size = 128;    // 重叠大小
+        // 0.5x使用正确的pitch-preserving时间拉伸
+        // 核心思想：输入跳跃小，输出跳跃大，用overlap-add保持音调
         
-        // 汉宁窗用于overlap
-        static float hanning_window[128];
-        static bool hann_init = false;
-        if (!hann_init) {
-            for (int i = 0; i < overlap_size; i++) {
-                hanning_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (overlap_size - 1)));
+        int frame_size = 2048;     // 大frame提高质量
+        int input_hop = 512;       // 输入步长（小）
+        int output_hop = 1024;     // 输出步长（大，实现0.5x）
+        int overlap_size = 512;    // 重叠区域
+        
+        // 高质量窗函数
+        static float window[2048];
+        static bool window_ready = false;
+        if (!window_ready) {
+            for (int i = 0; i < frame_size; i++) {
+                window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (frame_size - 1)));
             }
-            hann_init = true;
+            window_ready = true;
         }
         
         int input_pos = 0;
         int output_pos = 0;
         
-        // 清理输出缓冲区
-        memset(output, 0, max_output_length * sizeof(short));
-        
-        while (input_pos + frame_size < input_length && output_pos + synthesis_hop < max_output_length) {
-            // 寻找最佳匹配位置（限制搜索范围）
-            int best_offset = 0;
-            float best_correlation = -1.0f;
-            
-            for (int offset = 0; offset < 64 && input_pos + offset + frame_size < input_length; offset++) {
-                float correlation = 0.0f;
-                // 只计算overlap区域的相关性
-                for (int i = 0; i < overlap_size; i++) {
-                    for (int ch = 0; ch < num_channels; ch++) {
-                        int idx1 = input_pos + offset + i * num_channels + ch;
-                        if (output_pos + i * num_channels + ch < max_output_length && idx1 < input_length) {
-                            // 与上一个输出块的尾部比较
-                            correlation += abs(input[idx1]) * abs(output[output_pos + i * num_channels + ch]);
-                        }
-                    }
-                }
-                
-                if (correlation > best_correlation) {
-                    best_correlation = correlation;
-                    best_offset = offset;
-                }
-            }
-            
-            // 复制当前frame到输出
-            int src_pos = input_pos + best_offset;
-            for (int i = 0; i < frame_size && src_pos + i * num_channels < input_length; i++) {
+        while (input_pos + frame_size < input_length && output_pos + output_hop < max_output_length) {
+            // 应用窗函数并添加到输出
+            for (int i = 0; i < frame_size; i++) {
                 for (int ch = 0; ch < num_channels; ch++) {
-                    int in_idx = src_pos + i * num_channels + ch;
+                    int in_idx = input_pos + i * num_channels + ch;
                     int out_idx = output_pos + i * num_channels + ch;
                     
-                    if (out_idx < max_output_length) {
-                        float new_sample = input[in_idx];
+                    if (in_idx < input_length && out_idx < max_output_length) {
+                        // 应用窗函数
+                        float windowed_sample = input[in_idx] * window[i];
                         
-                        // 在overlap区域进行混合
-                        if (i < overlap_size && output[out_idx] != 0) {
-                            float existing = output[out_idx];
-                            float blend_weight = hanning_window[i];
-                            new_sample = existing * (1.0f - blend_weight) + new_sample * blend_weight;
-                        }
-                        
-                        output[out_idx] = (short)new_sample;
+                        // 累加到输出（overlap-add）
+                        output[out_idx] += (short)(windowed_sample * 0.5f); // 0.5防止溢出
                     }
                 }
             }
             
-            // 固定步长确保连续性：0.5x意味着输出步长是输入步长的2倍
-            input_pos += analysis_hop;
-            output_pos += synthesis_hop;
+            // 关键：输入步长小，输出步长大，保持音调不变
+            input_pos += input_hop;   // 前进512样本
+            output_pos += output_hop; // 前进1024样本，实现0.5x时间拉伸
         }
         
         *output_length = output_pos;
