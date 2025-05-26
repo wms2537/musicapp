@@ -36,31 +36,34 @@ long total_frames = 0;
 char playlist[10][256];
 int playlist_count = 0;
 int current_track = 0;
+long data_chunk_offset = 0; // Store the actual position of the data chunk
 
-// FIR滤波器系数
+// FIR滤波器系数 - 正确归一化的滤波器 (sum ≈ 1.0)
 static double bass_boost_coeffs[FIR_TAP_NUM] = {
-    0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08,
-    0.09, 0.10, 0.11, 0.12, 0.13, 0.14, 0.15, 0.16,
-    0.16, 0.15, 0.14, 0.13, 0.12, 0.11, 0.10, 0.09,
-    0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01
+    -0.005, -0.005, -0.005, 0.0, 0.01, 0.02, 0.03, 0.04,
+    0.05, 0.06, 0.07, 0.08, 0.09, 0.09, 0.09, 0.08,
+    0.08, 0.09, 0.09, 0.09, 0.08, 0.07, 0.06, 0.05,
+    0.04, 0.03, 0.02, 0.01, 0.0, -0.005, -0.005, -0.005
 };
 
 static double treble_boost_coeffs[FIR_TAP_NUM] = {
-    -0.005, -0.01, -0.015, -0.02, -0.01, 0.01, 0.03, 0.05,
-    0.08, 0.12, 0.16, 0.20, 0.24, 0.28, 0.32, 0.36,
-    0.36, 0.32, 0.28, 0.24, 0.20, 0.16, 0.12, 0.08,
-    0.05, 0.03, 0.01, -0.01, -0.02, -0.015, -0.01, -0.005
+    0.01, 0.005, 0.0, -0.01, -0.025, -0.04, -0.05, -0.04,
+    -0.02, 0.01, 0.05, 0.10, 0.15, 0.19, 0.21, 0.22,
+    0.22, 0.21, 0.19, 0.15, 0.10, 0.05, 0.01, -0.02,
+    -0.04, -0.05, -0.04, -0.025, -0.01, 0.0, 0.005, 0.01
 };
 
 static double vocal_enhance_coeffs[FIR_TAP_NUM] = {
-    0.005, 0.01, 0.02, 0.03, 0.05, 0.08, 0.12, 0.16,
-    0.20, 0.24, 0.28, 0.30, 0.32, 0.34, 0.35, 0.36,
-    0.36, 0.35, 0.34, 0.32, 0.30, 0.28, 0.24, 0.20,
-    0.16, 0.12, 0.08, 0.05, 0.03, 0.02, 0.01, 0.005
+    0.005, 0.005, 0.01, 0.01, 0.015, 0.02, 0.025, 0.03,
+    0.04, 0.05, 0.06, 0.075, 0.09, 0.10, 0.11, 0.115,
+    0.115, 0.11, 0.10, 0.09, 0.075, 0.06, 0.05, 0.04,
+    0.03, 0.025, 0.02, 0.015, 0.01, 0.01, 0.005, 0.005
 };
 
-static short delay_buffer[FIR_TAP_NUM] = {0};
-static int delay_index = 0;
+static short delay_buffer_left[FIR_TAP_NUM] = {0};
+static short delay_buffer_right[FIR_TAP_NUM] = {0};
+static int delay_index_left = 0;
+static int delay_index_right = 0;
 
 // 时间拉伸缓冲区
 static short stretch_buffer[STRETCH_FRAME_SIZE * 2] = {0};
@@ -282,18 +285,57 @@ void open_music_file(const char *path_name) {
     char info_msg[LOG_BUFFER_SIZE];
     snprintf(info_msg, sizeof(info_msg), "Successfully opened file: %s", path_name);
     log_program_info("INFO", info_msg);
-    wav_header_size = fread(&wav_header, 1, sizeof(struct WAV_HEADER), fp);
-    if (wav_header_size < 44) {
-        char error_msg[LOG_BUFFER_SIZE];
-        snprintf(error_msg, sizeof(error_msg), "Incomplete WAV header read. Read %d bytes", wav_header_size);
-        log_program_info("ERROR", error_msg);
-        fclose(fp);
-        exit(EXIT_FAILURE);
-    }
+    // Read the basic WAV header first (up to format chunk)
+    fread(&wav_header.chunk_id, 1, 4, fp);           // "RIFF"
+    fread(&wav_header.chunk_size, 1, 4, fp);         // File size - 8
+    fread(&wav_header.format, 1, 4, fp);             // "WAVE"
+    fread(&wav_header.sub_chunk1_id, 1, 4, fp);      // "fmt "
+    fread(&wav_header.sub_chunk1_size, 1, 4, fp);    // Format chunk size
+    
     if (strncmp(wav_header.chunk_id, "RIFF", 4) != 0 ||
         strncmp(wav_header.format, "WAVE", 4) != 0 ||
         strncmp(wav_header.sub_chunk1_id, "fmt ", 4) != 0) {
         log_program_info("ERROR", "File does not appear to be a valid WAV file (missing RIFF/WAVE/fmt markers)");
+        fclose(fp);
+        exit(EXIT_FAILURE);
+    }
+    
+    // Read the format chunk data
+    fread(&wav_header.audio_format, 1, 2, fp);
+    fread(&wav_header.num_channels, 1, 2, fp);
+    fread(&wav_header.sample_rate, 1, 4, fp);
+    fread(&wav_header.byte_rate, 1, 4, fp);
+    fread(&wav_header.block_align, 1, 2, fp);
+    fread(&wav_header.bits_per_sample, 1, 2, fp);
+    
+    // Skip any extra bytes in the format chunk
+    long fmt_extra_bytes = wav_header.sub_chunk1_size - 16;
+    if (fmt_extra_bytes > 0) {
+        fseek(fp, fmt_extra_bytes, SEEK_CUR);
+    }
+    
+    // Now search for the data chunk
+    char chunk_id[4];
+    uint32_t chunk_size;
+    data_chunk_offset = 0;
+    
+    while (fread(chunk_id, 1, 4, fp) == 4) {
+        fread(&chunk_size, 1, 4, fp);
+        
+        if (strncmp(chunk_id, "data", 4) == 0) {
+            // Found the data chunk
+            wav_header.sub_chunk2_size = chunk_size;
+            memcpy(wav_header.sub_chunk2_id, chunk_id, 4);
+            data_chunk_offset = ftell(fp);
+            break;
+        } else {
+            // Skip this chunk
+            fseek(fp, chunk_size, SEEK_CUR);
+        }
+    }
+    
+    if (data_chunk_offset == 0) {
+        log_program_info("ERROR", "Could not find data chunk in WAV file");
         fclose(fp);
         exit(EXIT_FAILURE);
     }
@@ -307,13 +349,8 @@ void open_music_file(const char *path_name) {
     printf("Audio Format: %u (1=PCM), Num Channels: %u\n", wav_header.audio_format, wav_header.num_channels);
     printf("Sample Rate: %u, Byte Rate: %u\n", wav_header.sample_rate, wav_header.byte_rate);
     printf("Block Align: %u, Bits Per Sample: %u\n", wav_header.block_align, wav_header.bits_per_sample);
-    if (strncmp(wav_header.sub_chunk2_id, "data", 4) == 0) {
-        printf("Data ID: %.4s, Data Size: %u\n", wav_header.sub_chunk2_id, wav_header.sub_chunk2_size);
-    } else {
-        char warning_msg[LOG_BUFFER_SIZE];
-        snprintf(warning_msg, sizeof(warning_msg), "'data' chunk ID not found immediately. sub_chunk2_id: %.4s", wav_header.sub_chunk2_id);
-        log_program_info("WARNING", warning_msg);
-    }
+    printf("Data ID: %.4s, Data Size: %u\n", wav_header.sub_chunk2_id, wav_header.sub_chunk2_size);
+    printf("Data chunk starts at offset: %ld\n", data_chunk_offset);
     printf("-----------------------------------------\n");
 }
 
@@ -386,22 +423,65 @@ void apply_fir_filter(short* input, short* output, int length, equalizer_mode_t 
             return;
     }
     
+    // 假设stereo (2 channels), 处理交错样本
+    int num_channels = wav_header.num_channels;
+    
     for (int i = 0; i < length; i++) {
-        delay_buffer[delay_index] = input[i];
-        
-        double filtered_sample = 0.0;
-        for (int j = 0; j < FIR_TAP_NUM; j++) {
-            int index = (delay_index - j + FIR_TAP_NUM) % FIR_TAP_NUM;
-            filtered_sample += coeffs[j] * delay_buffer[index];
+        if (num_channels == 1) {
+            // 单声道处理
+            delay_buffer_left[delay_index_left] = input[i];
+            
+            double filtered_sample = 0.0;
+            for (int j = 0; j < FIR_TAP_NUM; j++) {
+                int index = (delay_index_left - j + FIR_TAP_NUM) % FIR_TAP_NUM;
+                filtered_sample += coeffs[j] * delay_buffer_left[index];
+            }
+            
+            delay_index_left = (delay_index_left + 1) % FIR_TAP_NUM;
+            
+            // 限制输出范围防止溢出
+            if (filtered_sample > 32767) filtered_sample = 32767;
+            if (filtered_sample < -32768) filtered_sample = -32768;
+            
+            output[i] = (short)filtered_sample;
+        } else {
+            // 立体声处理 - 左右声道分别处理
+            if (i % 2 == 0) {
+                // 左声道
+                delay_buffer_left[delay_index_left] = input[i];
+                
+                double filtered_sample = 0.0;
+                for (int j = 0; j < FIR_TAP_NUM; j++) {
+                    int index = (delay_index_left - j + FIR_TAP_NUM) % FIR_TAP_NUM;
+                    filtered_sample += coeffs[j] * delay_buffer_left[index];
+                }
+                
+                delay_index_left = (delay_index_left + 1) % FIR_TAP_NUM;
+                
+                // 限制输出范围防止溢出
+                if (filtered_sample > 32767) filtered_sample = 32767;
+                if (filtered_sample < -32768) filtered_sample = -32768;
+                
+                output[i] = (short)filtered_sample;
+            } else {
+                // 右声道
+                delay_buffer_right[delay_index_right] = input[i];
+                
+                double filtered_sample = 0.0;
+                for (int j = 0; j < FIR_TAP_NUM; j++) {
+                    int index = (delay_index_right - j + FIR_TAP_NUM) % FIR_TAP_NUM;
+                    filtered_sample += coeffs[j] * delay_buffer_right[index];
+                }
+                
+                delay_index_right = (delay_index_right + 1) % FIR_TAP_NUM;
+                
+                // 限制输出范围防止溢出
+                if (filtered_sample > 32767) filtered_sample = 32767;
+                if (filtered_sample < -32768) filtered_sample = -32768;
+                
+                output[i] = (short)filtered_sample;
+            }
         }
-        
-        delay_index = (delay_index + 1) % FIR_TAP_NUM;
-        
-        // 限制输出范围防止溢出
-        if (filtered_sample > 32767) filtered_sample = 32767;
-        if (filtered_sample < -32768) filtered_sample = -32768;
-        
-        output[i] = (short)filtered_sample;
     }
 }
 
@@ -428,6 +508,12 @@ void next_track() {
     current_track = (current_track + 1) % playlist_count;
     log_user_operation("NEXT_TRACK", "SUCCESS");
     printf("切换到下一首: %s\n", playlist[current_track]);
+    
+    // Actually load the new file
+    if (fp) {
+        fclose(fp);
+    }
+    open_music_file(playlist[current_track]);
 }
 
 void previous_track() {
@@ -440,6 +526,12 @@ void previous_track() {
     current_track = (current_track - 1 + playlist_count) % playlist_count;
     log_user_operation("PREVIOUS_TRACK", "SUCCESS");
     printf("切换到上一首: %s\n", playlist[current_track]);
+    
+    // Actually load the new file
+    if (fp) {
+        fclose(fp);
+    }
+    open_music_file(playlist[current_track]);
 }
 
 void change_speed() {
@@ -461,7 +553,7 @@ void seek_forward() {
         current_position = total_frames - 1;
     }
     
-    fseek(fp, sizeof(struct WAV_HEADER) + current_position * wav_header.block_align, SEEK_SET);
+    fseek(fp, data_chunk_offset + current_position * wav_header.block_align, SEEK_SET);
     log_user_operation("SEEK_FORWARD", "SUCCESS");
     printf("快进10秒\n");
 }
@@ -478,7 +570,7 @@ void seek_backward() {
         current_position = 0;
     }
     
-    fseek(fp, sizeof(struct WAV_HEADER) + current_position * wav_header.block_align, SEEK_SET);
+    fseek(fp, data_chunk_offset + current_position * wav_header.block_align, SEEK_SET);
     log_user_operation("SEEK_BACKWARD", "SUCCESS");
     printf("快退10秒\n");
 }
@@ -768,6 +860,14 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
     
+    // 分配时间拉伸缓冲区 (allocate once, reuse for all iterations)
+    short* temp_samples = (short*)malloc(buffer_size * 2); // 2x size for safety
+    if (temp_samples == NULL) {
+        log_program_info("ERROR", "Failed to allocate temp_samples buffer");
+        free(filtered_buff);
+        exit(EXIT_FAILURE);
+    }
+    
     int read_ret;
     int speed_skip_counter = 0;
     
@@ -838,19 +938,13 @@ int main(int argc, char *argv[]) {
         if (wav_header.bits_per_sample == 16) {
             short* input_samples = (short*)buff;
             int sample_count = read_ret / sizeof(short);
-            // Allocate enough memory for time-stretched output (up to 2x original size for safety)
-            short* temp_samples = (short*)malloc(sample_count * 2 * sizeof(short));
-            if (temp_samples == NULL) {
-                log_program_info("ERROR", "Failed to allocate temp_samples buffer");
-                break;
-            }
             short* output_samples = (short*)filtered_buff;
             
             // 首先应用时间拉伸（保持音调）
             int stretched_length = 0;
             if (speed_factor != 1.0f) {
-                // Pass the max output buffer size (sample_count * 2) to prevent overflow
-                int max_output_samples = sample_count * 2;
+                // Use the pre-allocated temp_samples buffer
+                int max_output_samples = buffer_size / sizeof(short); // Use actual buffer size
                 apply_time_stretch(input_samples, temp_samples, sample_count, &stretched_length, speed_factor, max_output_samples);
                 processing_length = stretched_length * sizeof(short);
             } else {
@@ -863,8 +957,6 @@ int main(int argc, char *argv[]) {
             
             // 更新写入帧数为拉伸后的长度
             frames_to_write = stretched_length / wav_header.num_channels;
-            
-            free(temp_samples);
         } else {
             // 对于非16位样本，直接复制
             memcpy(filtered_buff, buff, read_ret);
@@ -899,6 +991,7 @@ int main(int argc, char *argv[]) {
     }
     
     free(filtered_buff);
+    free(temp_samples);
 
 playback_end:
     current_state = STOPPED;
