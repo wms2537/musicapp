@@ -432,31 +432,41 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // 0.5x使用优化的重叠相加，减少电音但保持正确音调
-        int frame_size = STRETCH_FRAME_SIZE; // 使用标准帧大小512
-        int hop_synthesis = frame_size / 4; // 128样本输出跳跃  
-        int hop_analysis = hop_synthesis / 2; // 64样本输入跳跃，实现0.5x
+        // 0.5x使用大窗口低重叠方法，最大化减少电音
+        int large_frame = 1024; // 使用更大的窗口
+        int hop_syn = large_frame / 2; // 512样本输出跳跃，减少重叠
+        int hop_ana = hop_syn / 2; // 256样本输入跳跃，实现0.5x
+        
+        // 创建更大的汉宁窗
+        static float large_hanning[1024];
+        static bool large_window_init = false;
+        if (!large_window_init) {
+            for (int i = 0; i < 1024; i++) {
+                large_hanning[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / 1023.0f));
+            }
+            large_window_init = true;
+        }
         
         input_pos = 0;
         output_pos = 0;
         
-        while (input_pos + frame_size < input_length && output_pos + frame_size < max_output_length) {
+        while (input_pos + large_frame < input_length && output_pos + large_frame < max_output_length) {
             for (int ch = 0; ch < num_channels; ch++) {
-                for (int i = 0; i < frame_size; i++) {
+                for (int i = 0; i < large_frame; i++) {
                     int sample_idx = input_pos + i * num_channels + ch;
                     int out_idx = output_pos + i * num_channels + ch;
                     
                     if (sample_idx < input_length && out_idx < max_output_length) {
-                        float windowed_sample = input[sample_idx] * hanning_window[i];
+                        float windowed_sample = input[sample_idx] * large_hanning[i];
                         
-                        // 使用更小的增益减少电音
-                        output[out_idx] += (short)(windowed_sample * 0.3f);
+                        // 使用更小的增益，因为重叠更少
+                        output[out_idx] += (short)(windowed_sample * 0.6f);
                     }
                 }
             }
             
-            input_pos += hop_analysis; // 64样本跳跃
-            output_pos += hop_synthesis; // 128样本跳跃，保持正确的0.5x比例
+            input_pos += hop_ana; // 256样本跳跃
+            output_pos += hop_syn; // 512样本跳跃
         }
         
         *output_length = output_pos;
