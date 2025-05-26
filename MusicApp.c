@@ -319,15 +319,16 @@ void open_music_file(const char *path_name) {
 
 // FIR滤波器实现
 // 简单的时间拉伸算法 - 保持音调的变速播放
-void apply_time_stretch(short* input, short* output, int input_length, int* output_length, float speed_factor) {
+void apply_time_stretch(short* input, short* output, int input_length, int* output_length, float speed_factor, int max_output_length) {
     *output_length = 0;
     
     if (speed_factor <= 0.0f || speed_factor == 1.0f) {
         // 无变化，直接复制
-        for (int i = 0; i < input_length; i++) {
+        int copy_length = input_length < max_output_length ? input_length : max_output_length;
+        for (int i = 0; i < copy_length; i++) {
             output[i] = input[i];
         }
-        *output_length = input_length;
+        *output_length = copy_length;
         return;
     }
     
@@ -337,7 +338,7 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     int input_pos = 0;
     int output_pos = 0;
     
-    while (input_pos + STRETCH_FRAME_SIZE <= input_length && output_pos + STRETCH_FRAME_SIZE < AUDIO_BUFFER_SIZE) {
+    while (input_pos + STRETCH_FRAME_SIZE <= input_length && output_pos + STRETCH_FRAME_SIZE < max_output_length) {
         // 复制当前帧到输出
         for (int i = 0; i < STRETCH_FRAME_SIZE; i++) {
             short sample = input[input_pos + i];
@@ -347,11 +348,11 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
             if (i < STRETCH_OVERLAP_SIZE) {
                 window = (float)i / STRETCH_OVERLAP_SIZE;
                 // 与前一帧重叠
-                if (output_pos + i < AUDIO_BUFFER_SIZE && output_pos + i >= 0) {
+                if (output_pos + i < max_output_length && output_pos + i >= 0) {
                     output[output_pos + i] = (short)(output[output_pos + i] * (1.0f - window) + sample * window);
                 }
             } else {
-                if (output_pos + i < AUDIO_BUFFER_SIZE) {
+                if (output_pos + i < max_output_length) {
                     output[output_pos + i] = sample;
                 }
             }
@@ -836,14 +837,21 @@ int main(int argc, char *argv[]) {
         
         if (wav_header.bits_per_sample == 16) {
             short* input_samples = (short*)buff;
-            short* temp_samples = (short*)malloc(AUDIO_BUFFER_SIZE * sizeof(short));
-            short* output_samples = (short*)filtered_buff;
             int sample_count = read_ret / sizeof(short);
+            // Allocate enough memory for time-stretched output (up to 2x original size for safety)
+            short* temp_samples = (short*)malloc(sample_count * 2 * sizeof(short));
+            if (temp_samples == NULL) {
+                log_program_info("ERROR", "Failed to allocate temp_samples buffer");
+                break;
+            }
+            short* output_samples = (short*)filtered_buff;
             
             // 首先应用时间拉伸（保持音调）
             int stretched_length = 0;
             if (speed_factor != 1.0f) {
-                apply_time_stretch(input_samples, temp_samples, sample_count, &stretched_length, speed_factor);
+                // Pass the max output buffer size (sample_count * 2) to prevent overflow
+                int max_output_samples = sample_count * 2;
+                apply_time_stretch(input_samples, temp_samples, sample_count, &stretched_length, speed_factor, max_output_samples);
                 processing_length = stretched_length * sizeof(short);
             } else {
                 memcpy(temp_samples, input_samples, read_ret);

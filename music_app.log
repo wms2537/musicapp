@@ -24162,3 +24162,19 @@
 [2025-05-18 18:55:28] [TRACE] ALSA_CHUNK 22 frames=6144 crc=3a489
 [2025-05-18 18:55:28] [INFO] Making private copy of buffer for ALSA write (source was not fresh speed-change malloc).
 [2025-05-18 18:55:28] [TRACE] ALSA_CHUNK 23 frames=6144 crc=fffffffffffd7437
+[2025-05-24 16:44:10] [INFO] MusicApp starting...
+[2025-05-24 16:44:10] [INFO] Loading track 1/1: ./test.wav
+[2025-05-24 16:44:10] [INFO] Searching for 'fmt ' chunk...
+[2025-05-24 16:44:10] [DEBUG] Found chunk ID 'fmt ', size 16.
+[2025-05-24 16:44:10] [INFO] 'fmt ' chunk found with size 16.
+[2025-05-24 16:44:10] [INFO] Searching for 'data' chunk...
+[2025-05-24 16:44:10] [DEBUG] Found chunk ID 'JUNK', size 28.
+[2025-05-24 16:44:10] [INFO] Skipping chunk 'JUNK' (size 28) between 'fmt ' and 'data'.
+[2025-05-24 16:44:10] [DEBUG] Found chunk ID 'data', size 1411200.
+[2025-05-24 16:44:10] [INFO] 'data' chunk found with size 1411200.
+[2025-05-24 16:44:10] [INFO] Successfully parsed WAV header for: ./test.wav
+[2025-05-24 16:44:10] [INFO] Initial track load. ALSA setup will be performed by main() using this track's parameters.
+[2025-05-24 16:44:10] [INFO] Track is S16_LE Mono. Initializing WSOLA.
+[2025-05-24 16:44:10] [INFO] wsola_init: WSOLA state initialized successfully. N=1323, No=661, Ha=662, Sw=661, InputRingCap=15957
+[2025-05-24 16:44:30] SYSTEM: STARTUP: Music player starting up
+[2025-05-26 02:40:42] SYSTEM: STARTUP: Music player starting up
