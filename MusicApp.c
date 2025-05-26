@@ -432,47 +432,53 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // 0.5x使用改进的WSOLA方法，减少杂音
-        int grain_size = 128;
-        int overlap_size = 32; // 重叠区域用于平滑过渡
+        // 0.5x使用优化的WSOLA，更适合人声和节奏
+        int grain_size = 96; // 稍小的grain，更好的时间分辨率
+        int overlap_size = 24; // 较小的重叠，减少失真
         
         input_pos = 0;
         output_pos = 0;
         
         while (input_pos + grain_size < input_length && output_pos + grain_size < max_output_length) {
-            // 简化处理：减少搜索复杂度以避免杂音
             int best_pos = input_pos;
             
-            // 如果不是第一个grain，进行有限的搜索以找到更好的连接点
+            // 改进的搜索算法，更适合人声
             if (output_pos > 0) {
-                float best_error = 1e9f;
-                int search_range = 16; // 减小搜索范围
+                float best_score = -1e9f;
+                int search_range = 24; // 增加搜索范围，找到更好的匹配
                 
                 for (int search = 0; search < search_range && input_pos + search + grain_size < input_length; search++) {
                     int test_pos = input_pos + search;
-                    float error = 0.0f;
+                    float score = 0.0f;
+                    int valid_samples = 0;
                     
-                    // 简单的误差计算，避免复杂的相关性计算
-                    for (int i = 0; i < overlap_size; i++) {
+                    // 计算相关性而不是误差，对人声更有效
+                    for (int i = 0; i < overlap_size / 2; i++) { // 只检查一半重叠区域
                         for (int ch = 0; ch < num_channels; ch++) {
-                            int prev_out_idx = output_pos - overlap_size + i * num_channels + ch;
+                            int prev_out_idx = output_pos - overlap_size / 2 + i * num_channels + ch;
                             int test_idx = test_pos + i * num_channels + ch;
                             
-                            if (prev_out_idx >= 0 && test_idx < input_length) {
-                                float diff = output[prev_out_idx] - input[test_idx];
-                                error += diff * diff;
+                            if (prev_out_idx >= 0 && prev_out_idx < max_output_length && test_idx < input_length) {
+                                // 归一化相关性计算
+                                float prev_val = (float)output[prev_out_idx] / 32768.0f;
+                                float test_val = (float)input[test_idx] / 32768.0f;
+                                score += prev_val * test_val;
+                                valid_samples++;
                             }
                         }
                     }
                     
-                    if (error < best_error) {
-                        best_error = error;
-                        best_pos = test_pos;
+                    if (valid_samples > 0) {
+                        score /= valid_samples; // 归一化分数
+                        if (score > best_score) {
+                            best_score = score;
+                            best_pos = test_pos;
+                        }
                     }
                 }
             }
             
-            // 复制grain并应用平滑过渡
+            // 复制grain并应用改进的交叉淡化
             for (int ch = 0; ch < num_channels; ch++) {
                 for (int i = 0; i < grain_size; i++) {
                     int sample_idx = best_pos + i * num_channels + ch;
@@ -481,9 +487,10 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
                     if (sample_idx < input_length && out_idx < max_output_length) {
                         short new_sample = input[sample_idx];
                         
-                        // 在重叠区域应用交叉淡化
+                        // 使用平滑的余弦淡化而不是线性淡化
                         if (output_pos > 0 && i < overlap_size) {
-                            float blend = (float)i / overlap_size;
+                            float t = (float)i / overlap_size;
+                            float blend = 0.5f * (1.0f - cosf(M_PI * t)); // 余弦淡化，更平滑
                             short old_sample = output[out_idx];
                             output[out_idx] = (short)(old_sample * (1.0f - blend) + new_sample * blend);
                         } else {
@@ -493,7 +500,7 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
                 }
             }
             
-            input_pos = best_pos + (grain_size - overlap_size) / 2; // 正确的0.5x速度
+            input_pos = best_pos + (grain_size - overlap_size) / 2; // 0.5x速度
             output_pos += grain_size - overlap_size;
         }
         
