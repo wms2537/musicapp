@@ -432,47 +432,93 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // 0.5x特殊处理：固定间距重叠，保持音调和音质
-        int window_size = 1024; // 更大的窗口更平滑
-        int hop_size = 256;     // 输入跳跃
-        int overlap_size = window_size - hop_size;
+        // 0.5x使用VLC scaletempo算法：overlap-add with cross-correlation
+        int stride_length = 1024;      // 输出块大小
+        int overlap_length = 256;      // 20%重叠 
+        int search_length = 128;       // 搜索范围
         
-        // 三角窗（比汉宁窗更平滑）
-        static float triangle_window[1024];
-        static bool tri_window_init = false;
-        if (!tri_window_init) {
-            for (int i = 0; i < window_size; i++) {
-                if (i < window_size / 2) {
-                    triangle_window[i] = (float)i / (window_size / 2);
-                } else {
-                    triangle_window[i] = 2.0f - (float)i / (window_size / 2);
-                }
+        // 三角窗函数用于overlap blending
+        static float triangle_blend[256];
+        static bool blend_init = false;
+        if (!blend_init) {
+            for (int i = 0; i < overlap_length; i++) {
+                triangle_blend[i] = (float)i / overlap_length;
             }
-            tri_window_init = true;
+            blend_init = true;
         }
         
         int input_pos = 0;
         int output_pos = 0;
+        static short overlap_buffer[4096]; // 保存上一个输出块的尾部
+        static int overlap_samples = 0;
         
-        while (input_pos + window_size < input_length && output_pos + window_size * 2 < max_output_length) {
-            // 每个输入窗口产生两个输出窗口（0.5x效果）
-            for (int copy = 0; copy < 2; copy++) {
-                for (int ch = 0; ch < num_channels; ch++) {
-                    for (int i = 0; i < window_size; i++) {
-                        int in_idx = input_pos + i * num_channels + ch;
-                        int out_idx = output_pos + copy * hop_size * 2 + i * num_channels + ch;
-                        
-                        if (in_idx < input_length && out_idx < max_output_length) {
-                            // 轻度窗函数，主要保持原始信号
-                            float windowed = input[in_idx] * (0.9f + 0.1f * triangle_window[i]);
-                            output[out_idx] += (short)(windowed * 0.5f);
+        while (input_pos + stride_length < input_length && output_pos + stride_length * 2 < max_output_length) {
+            // 寻找最佳重叠位置（cross-correlation）
+            int best_offset = 0;
+            float best_correlation = -1.0f;
+            
+            for (int offset = 0; offset < search_length && input_pos + offset + overlap_length < input_length; offset++) {
+                float correlation = 0.0f;
+                for (int i = 0; i < overlap_length; i++) {
+                    for (int ch = 0; ch < num_channels; ch++) {
+                        int idx1 = input_pos + offset + i * num_channels + ch;
+                        int idx2 = input_pos + i * num_channels + ch;
+                        if (idx1 < input_length && idx2 < input_length) {
+                            correlation += input[idx1] * input[idx2];
                         }
+                    }
+                }
+                
+                if (correlation > best_correlation) {
+                    best_correlation = correlation;
+                    best_offset = offset;
+                }
+            }
+            
+            // 应用最佳偏移并执行overlap-add
+            int adjusted_input_pos = input_pos + best_offset;
+            
+            // 首先处理overlap部分
+            for (int i = 0; i < overlap_length && output_pos + i * num_channels < max_output_length; i++) {
+                for (int ch = 0; ch < num_channels; ch++) {
+                    int in_idx = adjusted_input_pos + i * num_channels + ch;
+                    int out_idx = output_pos + i * num_channels + ch;
+                    
+                    if (in_idx < input_length && out_idx < max_output_length) {
+                        float new_sample = input[in_idx];
+                        float old_sample = (overlap_samples > i * num_channels + ch) ? overlap_buffer[i * num_channels + ch] : 0;
+                        
+                        // 三角窗混合
+                        float blended = old_sample * (1.0f - triangle_blend[i]) + new_sample * triangle_blend[i];
+                        output[out_idx] = (short)blended;
                     }
                 }
             }
             
-            input_pos += hop_size;
-            output_pos += hop_size * 2; // 0.5x速度
+            // 复制剩余的stride部分
+            for (int i = overlap_length; i < stride_length; i++) {
+                for (int ch = 0; ch < num_channels; ch++) {
+                    int in_idx = adjusted_input_pos + i * num_channels + ch;
+                    int out_idx = output_pos + i * num_channels + ch;
+                    
+                    if (in_idx < input_length && out_idx < max_output_length) {
+                        output[out_idx] = input[in_idx];
+                    }
+                }
+            }
+            
+            // 保存当前块的尾部用于下次overlap
+            overlap_samples = overlap_length * num_channels;
+            for (int i = 0; i < overlap_samples; i++) {
+                int src_idx = output_pos + (stride_length - overlap_length) * num_channels + i;
+                if (src_idx < max_output_length) {
+                    overlap_buffer[i] = output[src_idx];
+                }
+            }
+            
+            // 0.5x速度：输入移动stride_length/2，输出移动stride_length
+            input_pos += stride_length / 2;
+            output_pos += stride_length;
         }
         
         *output_length = output_pos;
