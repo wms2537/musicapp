@@ -402,8 +402,8 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     
     int num_channels = wav_header.num_channels;
     int frame_size = STRETCH_FRAME_SIZE;
-    int hop_analysis = (int)(frame_size * speed_factor); // 分析跳跃
-    int hop_synthesis = frame_size / 2; // 合成跳跃（固定，保持音调）
+    int hop_synthesis = frame_size / 4; // 合成跳跃（固定，保持音调）128 samples
+    int hop_analysis = (int)(hop_synthesis * speed_factor); // 分析跳跃（基于速度调整）
     
     // 汉宁窗函数
     static float hanning_window[STRETCH_FRAME_SIZE];
@@ -426,24 +426,17 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     while (input_pos + frame_size < input_length && output_pos + frame_size < max_output_length) {
         // 对每个声道分别处理
         for (int ch = 0; ch < num_channels; ch++) {
-            // 提取当前帧（带窗函数）
-            float windowed_frame[STRETCH_FRAME_SIZE];
+            // 提取当前帧并应用窗函数
             for (int i = 0; i < frame_size; i++) {
                 int sample_idx = input_pos + i * num_channels + ch;
-                if (sample_idx < input_length) {
-                    windowed_frame[i] = input[sample_idx] * hanning_window[i];
-                } else {
-                    windowed_frame[i] = 0.0f;
-                }
-            }
-            
-            // 重叠相加到输出
-            for (int i = 0; i < frame_size; i++) {
                 int out_idx = output_pos + i * num_channels + ch;
-                if (out_idx < max_output_length) {
-                    // 应用窗函数并累加
-                    float contribution = windowed_frame[i] * hanning_window[i];
-                    output[out_idx] += (short)contribution;
+                
+                if (sample_idx < input_length && out_idx < max_output_length) {
+                    // 应用汉宁窗函数到输入样本
+                    float windowed_sample = input[sample_idx] * hanning_window[i];
+                    
+                    // 重叠相加到输出（使用适当的增益补偿）
+                    output[out_idx] += (short)(windowed_sample * 0.5f); // 0.5f是增益补偿
                 }
             }
         }
@@ -1082,7 +1075,21 @@ int main(int argc, char *argv[]) {
         
         if (read_ret < buffer_size) {
             log_program_info("PLAYBACK", "End of music file (partial buffer read)");
-            break;
+            // 自动切换到下一首
+            if (playlist_count > 1) {
+                current_track = (current_track + 1) % playlist_count;
+                log_user_operation("AUTO_NEXT_TRACK", "SUCCESS");
+                printf("自动切换到下一首: %s\n", playlist[current_track]);
+                fclose(fp);
+                if (!open_music_file(playlist[current_track])) {
+                    printf("ERROR: Failed to open next track: %s\n", playlist[current_track]);
+                    break;
+                }
+                continue;
+            } else {
+                printf("End of playlist!\n");
+                break;
+            }
         }
     }
     
