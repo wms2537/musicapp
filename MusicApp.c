@@ -37,6 +37,7 @@ char playlist[10][256];
 int playlist_count = 0;
 int current_track = 0;
 long data_chunk_offset = 0; // Store the actual position of the data chunk
+bool track_change_requested = false; // Flag for manual track changes
 
 // FIR滤波器系数 - 正确归一化的滤波器 (sum ≈ 1.0)
 static double bass_boost_coeffs[FIR_TAP_NUM] = {
@@ -355,7 +356,7 @@ void open_music_file(const char *path_name) {
 }
 
 // FIR滤波器实现
-// 简单的时间拉伸算法 - 保持音调的变速播放
+// 简化的时间拉伸算法 - 减少机器人音效
 void apply_time_stretch(short* input, short* output, int input_length, int* output_length, float speed_factor, int max_output_length) {
     *output_length = 0;
     
@@ -369,34 +370,35 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
         return;
     }
     
-    float hop_input = STRETCH_HOP_SIZE * speed_factor;
-    float hop_output = STRETCH_HOP_SIZE;
-    
-    int input_pos = 0;
+    // 使用简单的线性插值方法，减少伪影
+    float input_pos_float = 0.0f;
     int output_pos = 0;
     
-    while (input_pos + STRETCH_FRAME_SIZE <= input_length && output_pos + STRETCH_FRAME_SIZE < max_output_length) {
-        // 复制当前帧到输出
-        for (int i = 0; i < STRETCH_FRAME_SIZE; i++) {
-            short sample = input[input_pos + i];
+    // 对于慢速播放(0.5x)，使用简单的重复/插值策略
+    if (speed_factor < 1.0f) {
+        // 慢速播放：插值增加样本
+        while (output_pos < max_output_length && (int)input_pos_float < input_length - 1) {
+            int input_pos = (int)input_pos_float;
+            float frac = input_pos_float - input_pos;
             
-            // 应用重叠窗函数 (简单的三角窗)
-            float window = 1.0f;
-            if (i < STRETCH_OVERLAP_SIZE) {
-                window = (float)i / STRETCH_OVERLAP_SIZE;
-                // 与前一帧重叠
-                if (output_pos + i < max_output_length && output_pos + i >= 0) {
-                    output[output_pos + i] = (short)(output[output_pos + i] * (1.0f - window) + sample * window);
-                }
-            } else {
-                if (output_pos + i < max_output_length) {
-                    output[output_pos + i] = sample;
-                }
-            }
+            // 线性插值
+            short sample1 = input[input_pos];
+            short sample2 = input[input_pos + 1];
+            short interpolated = (short)(sample1 * (1.0f - frac) + sample2 * frac);
+            
+            output[output_pos] = interpolated;
+            
+            input_pos_float += speed_factor;
+            output_pos++;
         }
-        
-        input_pos += (int)hop_input;
-        output_pos += (int)hop_output;
+    } else {
+        // 快速播放：跳过样本
+        while (output_pos < max_output_length && (int)input_pos_float < input_length) {
+            output[output_pos] = input[(int)input_pos_float];
+            
+            input_pos_float += speed_factor;
+            output_pos++;
+        }
     }
     
     *output_length = output_pos;
@@ -509,11 +511,8 @@ void next_track() {
     log_user_operation("NEXT_TRACK", "SUCCESS");
     printf("切换到下一首: %s\n", playlist[current_track]);
     
-    // Actually load the new file
-    if (fp) {
-        fclose(fp);
-    }
-    open_music_file(playlist[current_track]);
+    // Set flag for main loop to handle the file change
+    track_change_requested = true;
 }
 
 void previous_track() {
@@ -527,11 +526,8 @@ void previous_track() {
     log_user_operation("PREVIOUS_TRACK", "SUCCESS");
     printf("切换到上一首: %s\n", playlist[current_track]);
     
-    // Actually load the new file
-    if (fp) {
-        fclose(fp);
-    }
-    open_music_file(playlist[current_track]);
+    // Set flag for main loop to handle the file change
+    track_change_requested = true;
 }
 
 void change_speed() {
@@ -892,6 +888,14 @@ int main(int argc, char *argv[]) {
             break;
         }
         
+        // 处理手动切换曲目请求
+        if (track_change_requested) {
+            track_change_requested = false;
+            fclose(fp);
+            open_music_file(playlist[current_track]);
+            continue;
+        }
+        
         // 获取播放速度因子
         float speed_factor = 1.0f;
         switch(current_speed) {
@@ -906,7 +910,9 @@ int main(int argc, char *argv[]) {
             log_program_info("PLAYBACK", "End of current track");
             // 自动切换到下一首
             if (playlist_count > 1) {
-                next_track();
+                current_track = (current_track + 1) % playlist_count;
+                log_user_operation("AUTO_NEXT_TRACK", "SUCCESS");
+                printf("自动切换到下一首: %s\n", playlist[current_track]);
                 fclose(fp);
                 open_music_file(playlist[current_track]);
                 continue;
