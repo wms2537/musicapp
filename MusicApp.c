@@ -432,65 +432,69 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // 0.5x使用WSOLA方法：基于波形相似性的重叠相加
-        int grain_size = 128; // 小粒度，减少伪影
-        int search_region = 64; // 搜索区域
+        // 0.5x使用改进的WSOLA方法，减少杂音
+        int grain_size = 128;
+        int overlap_size = 32; // 重叠区域用于平滑过渡
         
         input_pos = 0;
         output_pos = 0;
-        int prev_input_pos = 0;
         
         while (input_pos + grain_size < input_length && output_pos + grain_size < max_output_length) {
-            // 寻找最佳匹配位置以减少不连续性
+            // 简化处理：减少搜索复杂度以避免杂音
             int best_pos = input_pos;
-            float best_correlation = -1.0f;
             
-            // 在搜索区域内寻找最相似的波形
-            for (int search = 0; search < search_region && input_pos + search + grain_size < input_length; search++) {
-                float correlation = 0.0f;
-                int test_pos = input_pos + search;
+            // 如果不是第一个grain，进行有限的搜索以找到更好的连接点
+            if (output_pos > 0) {
+                float best_error = 1e9f;
+                int search_range = 16; // 减小搜索范围
                 
-                // 计算与前一个grain末尾的相关性
-                if (prev_input_pos > 0) {
-                    for (int i = 0; i < 32 && i < grain_size; i++) { // 只检查前32个样本
+                for (int search = 0; search < search_range && input_pos + search + grain_size < input_length; search++) {
+                    int test_pos = input_pos + search;
+                    float error = 0.0f;
+                    
+                    // 简单的误差计算，避免复杂的相关性计算
+                    for (int i = 0; i < overlap_size; i++) {
                         for (int ch = 0; ch < num_channels; ch++) {
-                            int prev_idx = prev_input_pos + (grain_size - 32 + i) * num_channels + ch;
-                            int curr_idx = test_pos + i * num_channels + ch;
+                            int prev_out_idx = output_pos - overlap_size + i * num_channels + ch;
+                            int test_idx = test_pos + i * num_channels + ch;
                             
-                            if (prev_idx < input_length && curr_idx < input_length) {
-                                correlation += input[prev_idx] * input[curr_idx];
+                            if (prev_out_idx >= 0 && test_idx < input_length) {
+                                float diff = output[prev_out_idx] - input[test_idx];
+                                error += diff * diff;
                             }
                         }
                     }
-                }
-                
-                if (correlation > best_correlation) {
-                    best_correlation = correlation;
-                    best_pos = test_pos;
+                    
+                    if (error < best_error) {
+                        best_error = error;
+                        best_pos = test_pos;
+                    }
                 }
             }
             
-            // 复制最佳匹配的grain
+            // 复制grain并应用平滑过渡
             for (int ch = 0; ch < num_channels; ch++) {
                 for (int i = 0; i < grain_size; i++) {
                     int sample_idx = best_pos + i * num_channels + ch;
                     int out_idx = output_pos + i * num_channels + ch;
                     
                     if (sample_idx < input_length && out_idx < max_output_length) {
-                        // 在开始处应用淡入以平滑连接
-                        float fade_factor = 1.0f;
-                        if (i < 16) { // 淡入前16个样本
-                            fade_factor = (float)i / 16.0f;
-                        }
+                        short new_sample = input[sample_idx];
                         
-                        output[out_idx] = (short)(input[sample_idx] * fade_factor);
+                        // 在重叠区域应用交叉淡化
+                        if (output_pos > 0 && i < overlap_size) {
+                            float blend = (float)i / overlap_size;
+                            short old_sample = output[out_idx];
+                            output[out_idx] = (short)(old_sample * (1.0f - blend) + new_sample * blend);
+                        } else {
+                            output[out_idx] = new_sample;
+                        }
                     }
                 }
             }
             
-            prev_input_pos = best_pos;
-            input_pos = best_pos + grain_size / 2; // 0.5x速度
-            output_pos += grain_size;
+            input_pos = best_pos + grain_size - overlap_size; // 0.5x速度，考虑重叠
+            output_pos += grain_size - overlap_size;
         }
         
         *output_length = output_pos;
