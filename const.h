@@ -124,6 +124,7 @@ void seek_backward();
 void toggle_equalizer();
 void apply_fir_filter(short* input, short* output, int length, equalizer_mode_t mode);
 void apply_time_stretch(short* input, short* output, int input_length, int* output_length, float speed_factor, int max_output_length);
+void reset_time_stretch_static_vars();
 void print_status();
 void handle_user_input(char input);
 

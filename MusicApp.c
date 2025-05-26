@@ -293,6 +293,9 @@ void reset_audio_processing_state() {
     // 清空时间拉伸缓冲区
     memset(stretch_buffer, 0, sizeof(stretch_buffer));
     memset(overlap_buffer, 0, sizeof(overlap_buffer));
+    
+    // 重置时间拉伸算法中的静态变量
+    reset_time_stretch_static_vars();
 }
 
 bool open_music_file(const char *path_name) {
@@ -387,6 +390,13 @@ bool open_music_file(const char *path_name) {
 }
 
 // FIR滤波器实现
+// 添加重置标志
+static bool need_reset_static_vars = false;
+
+void reset_time_stretch_static_vars() {
+    need_reset_static_vars = true;
+}
+
 // 保持音调的时间拉伸算法 - 恢复到工作状态
 void apply_time_stretch(short* input, short* output, int input_length, int* output_length, float speed_factor, int max_output_length) {
     *output_length = 0;
@@ -416,6 +426,13 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     // 汉宁窗函数
     static float hanning_window[STRETCH_FRAME_SIZE];
     static bool window_initialized = false;
+    
+    // 重置静态变量（文件切换时）
+    if (need_reset_static_vars) {
+        window_initialized = false;
+        need_reset_static_vars = false;
+    }
+    
     if (!window_initialized) {
         for (int i = 0; i < frame_size; i++) {
             hanning_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (frame_size - 1)));
