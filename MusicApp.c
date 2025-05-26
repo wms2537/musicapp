@@ -432,51 +432,40 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // 0.5x使用连续overlap-add确保平滑连接
-        int frame_size = 1024;       // frame大小
-        int hop_in = 256;           // 输入跳跃（小步长）
-        int hop_out = 512;          // 输出跳跃（大步长，实现0.5x）
+        // 0.5x使用简化WSOLA保持音调不变
+        int window_size = 2048;     // 大窗口提高质量
+        int input_hop = 512;        // 输入跳跃
+        int output_hop = 1024;      // 输出跳跃（2x实现0.5x）
+        int overlap = 512;          // 重叠区域
         
-        // 简单线性窗函数，确保连续性
-        static float linear_window[1024];
-        static bool lin_ready = false;
-        if (!lin_ready) {
-            for (int i = 0; i < frame_size; i++) {
-                linear_window[i] = 1.0f; // 先试试无窗函数
-            }
-            lin_ready = true;
-        }
-        
+        // 简单矩形窗，避免复杂计算
         int input_pos = 0;
         int output_pos = 0;
         
-        // 初始化输出为0
-        for (int i = 0; i < max_output_length; i++) {
-            output[i] = 0;
-        }
-        
-        while (input_pos + frame_size < input_length && output_pos + frame_size < max_output_length) {
-            // 直接复制frame到输出位置
-            for (int i = 0; i < frame_size; i++) {
+        while (input_pos + window_size < input_length && output_pos + output_hop < max_output_length) {
+            // 简单复制窗口，不做相关性搜索
+            for (int i = 0; i < window_size; i++) {
                 for (int ch = 0; ch < num_channels; ch++) {
                     int in_idx = input_pos + i * num_channels + ch;
                     int out_idx = output_pos + i * num_channels + ch;
                     
                     if (in_idx < input_length && out_idx < max_output_length) {
-                        // 简单替换，避免累加造成的问题
-                        if (output[out_idx] == 0) {
-                            output[out_idx] = input[in_idx];
+                        if (i < overlap && output[out_idx] != 0) {
+                            // 简单线性混合overlap区域
+                            float weight = (float)i / overlap;
+                            float existing = output[out_idx];
+                            float new_sample = input[in_idx];
+                            output[out_idx] = (short)(existing * (1.0f - weight) + new_sample * weight);
                         } else {
-                            // 只在重叠区域做简单平均
-                            output[out_idx] = (short)((output[out_idx] + input[in_idx]) / 2);
+                            output[out_idx] = input[in_idx];
                         }
                     }
                 }
             }
             
-            // 0.5x速度的关键：输入步长小，输出步长大
-            input_pos += hop_in;    // 前进256
-            output_pos += hop_out;  // 前进512，产生2x长度
+            // WSOLA核心：不同的输入输出步长实现时间拉伸但保持音调
+            input_pos += input_hop;   // 小步长
+            output_pos += output_hop; // 大步长，实现0.5x
         }
         
         *output_length = output_pos;
