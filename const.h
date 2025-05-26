@@ -114,7 +114,7 @@ void log_program_info(const char* info_type, const char* message);
 
 // 函数声明
 bool debug_msg(int result, const char *str);
-void open_music_file(const char *path_name);
+bool open_music_file(const char *path_name);
 void toggle_pause();
 void next_track();
 void previous_track();

@@ -294,7 +294,7 @@ void reset_audio_processing_state() {
     memset(overlap_buffer, 0, sizeof(overlap_buffer));
 }
 
-void open_music_file(const char *path_name) {
+bool open_music_file(const char *path_name) {
     if (fp != NULL) {
         fclose(fp);
     }
@@ -304,7 +304,7 @@ void open_music_file(const char *path_name) {
         char error_msg[LOG_BUFFER_SIZE];
         snprintf(error_msg, sizeof(error_msg), "Error opening WAV file: %s", path_name);
         log_program_info("ERROR", error_msg);
-        exit(EXIT_FAILURE);
+        return false;
     }
     
     char info_msg[LOG_BUFFER_SIZE];
@@ -322,7 +322,8 @@ void open_music_file(const char *path_name) {
         strncmp(wav_header.sub_chunk1_id, "fmt ", 4) != 0) {
         log_program_info("ERROR", "File does not appear to be a valid WAV file (missing RIFF/WAVE/fmt markers)");
         fclose(fp);
-        exit(EXIT_FAILURE);
+        fp = NULL;
+        return false;
     }
     
     // Read the format chunk data
@@ -362,7 +363,8 @@ void open_music_file(const char *path_name) {
     if (data_chunk_offset == 0) {
         log_program_info("ERROR", "Could not find data chunk in WAV file");
         fclose(fp);
-        exit(EXIT_FAILURE);
+        fp = NULL;
+        return false;
     }
     
     // 计算总帧数
@@ -380,6 +382,7 @@ void open_music_file(const char *path_name) {
     
     // 重置音频处理状态以避免静态变量污染
     reset_audio_processing_state();
+    return true;
 }
 
 // FIR滤波器实现
@@ -757,7 +760,10 @@ int main(int argc, char *argv[]) {
                     playlist_count++;
                 }
                 if (!file_opened) {
-                    open_music_file(optarg);
+                    if (!open_music_file(optarg)) {
+                        fprintf(stderr, "Failed to open music file: %s\n", optarg);
+                        exit(EXIT_FAILURE);
+                    }
                     file_opened = true;
                 }
                 break;
@@ -962,8 +968,18 @@ int main(int argc, char *argv[]) {
         // 处理手动切换曲目请求
         if (track_change_requested) {
             track_change_requested = false;
-            fclose(fp);
-            open_music_file(playlist[current_track]);
+            printf("DEBUG: Starting track change to: %s\n", playlist[current_track]);
+            if (fp) {
+                fclose(fp);
+                fp = NULL;
+            }
+            printf("DEBUG: Closed previous file, opening new file\n");
+            if (!open_music_file(playlist[current_track])) {
+                printf("ERROR: Failed to open new track: %s\n", playlist[current_track]);
+                current_state = STOPPED;
+                break;
+            }
+            printf("DEBUG: Opened new file successfully\n");
             continue;
         }
         
@@ -985,7 +1001,10 @@ int main(int argc, char *argv[]) {
                 log_user_operation("AUTO_NEXT_TRACK", "SUCCESS");
                 printf("自动切换到下一首: %s\n", playlist[current_track]);
                 fclose(fp);
-                open_music_file(playlist[current_track]);
+                if (!open_music_file(playlist[current_track])) {
+                    printf("ERROR: Failed to open next track: %s\n", playlist[current_track]);
+                    break;
+                }
                 continue;
             } else {
                 printf("End of music file input! (fread returned 0)\n");
@@ -1067,14 +1086,18 @@ int main(int argc, char *argv[]) {
         }
     }
     
+    printf("DEBUG: Starting buffer cleanup\n");
     if (filtered_buff) {
+        printf("DEBUG: Freeing filtered_buff\n");
         free(filtered_buff);
         filtered_buff = NULL;
     }
     if (temp_samples) {
+        printf("DEBUG: Freeing temp_samples\n");
         free(temp_samples);
         temp_samples = NULL;
     }
+    printf("DEBUG: Buffer cleanup completed\n");
 
 playback_end:
     current_state = STOPPED;
