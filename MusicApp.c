@@ -432,71 +432,51 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // 0.5x使用精确的相位锁定overlap-add，保持节奏流畅性
-        int grain_size = 1024;          // 合适的grain大小
-        int analysis_hop = 512;         // 分析跳跃 
-        int synthesis_hop = 1024;       // 合成跳跃（2x分析跳跃实现0.5x）
-        int search_range = 64;          // 相位搜索范围
+        // 0.5x使用连续overlap-add确保平滑连接
+        int frame_size = 1024;       // frame大小
+        int hop_in = 256;           // 输入跳跃（小步长）
+        int hop_out = 512;          // 输出跳跃（大步长，实现0.5x）
         
-        // 汉宁窗用于平滑过渡
-        static float hann_window[1024];
-        static bool hann_ready = false;
-        if (!hann_ready) {
-            for (int i = 0; i < grain_size; i++) {
-                hann_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (grain_size - 1)));
+        // 简单线性窗函数，确保连续性
+        static float linear_window[1024];
+        static bool lin_ready = false;
+        if (!lin_ready) {
+            for (int i = 0; i < frame_size; i++) {
+                linear_window[i] = 1.0f; // 先试试无窗函数
             }
-            hann_ready = true;
+            lin_ready = true;
         }
         
         int input_pos = 0;
         int output_pos = 0;
         
-        while (input_pos + grain_size < input_length && output_pos + synthesis_hop + grain_size < max_output_length) {
-            // 寻找最佳相位匹配位置
-            int best_offset = 0;
-            float best_score = 1e10f;
-            
-            for (int offset = 0; offset < search_range && input_pos + offset + grain_size < input_length; offset++) {
-                float score = 0.0f;
-                // 计算与前一个grain的相位差异
-                for (int i = 0; i < 128; i++) { // 只检查开始部分
-                    for (int ch = 0; ch < num_channels; ch++) {
-                        int curr_idx = input_pos + offset + i * num_channels + ch;
-                        int prev_idx = input_pos - analysis_hop + i * num_channels + ch;
-                        
-                        if (curr_idx < input_length && prev_idx >= 0) {
-                            float diff = input[curr_idx] - input[prev_idx];
-                            score += diff * diff;
-                        }
-                    }
-                }
-                
-                if (score < best_score) {
-                    best_score = score;
-                    best_offset = offset;
-                }
-            }
-            
-            // 使用最佳偏移复制grain
-            int source_pos = input_pos + best_offset;
-            
-            for (int i = 0; i < grain_size; i++) {
+        // 初始化输出为0
+        for (int i = 0; i < max_output_length; i++) {
+            output[i] = 0;
+        }
+        
+        while (input_pos + frame_size < input_length && output_pos + frame_size < max_output_length) {
+            // 直接复制frame到输出位置
+            for (int i = 0; i < frame_size; i++) {
                 for (int ch = 0; ch < num_channels; ch++) {
-                    int in_idx = source_pos + i * num_channels + ch;
+                    int in_idx = input_pos + i * num_channels + ch;
                     int out_idx = output_pos + i * num_channels + ch;
                     
                     if (in_idx < input_length && out_idx < max_output_length) {
-                        float sample = input[in_idx] * hann_window[i];
-                        
-                        // 使用累加以实现overlap
-                        output[out_idx] += (short)(sample * 0.7f); // 略微降低增益避免溢出
+                        // 简单替换，避免累加造成的问题
+                        if (output[out_idx] == 0) {
+                            output[out_idx] = input[in_idx];
+                        } else {
+                            // 只在重叠区域做简单平均
+                            output[out_idx] = (short)((output[out_idx] + input[in_idx]) / 2);
+                        }
                     }
                 }
             }
             
-            // 精确的步长控制
-            input_pos += analysis_hop;     // 输入前进512
-            output_pos += synthesis_hop;   // 输出前进1024，实现0.5x
+            // 0.5x速度的关键：输入步长小，输出步长大
+            input_pos += hop_in;    // 前进256
+            output_pos += hop_out;  // 前进512，产生2x长度
         }
         
         *output_length = output_pos;
