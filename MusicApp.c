@@ -387,7 +387,7 @@ bool open_music_file(const char *path_name) {
 }
 
 // FIR滤波器实现
-// 改进的保持音调的时间拉伸算法 - 使用更小的帧和更好的重叠
+// 保持音调的时间拉伸算法 - 恢复到工作状态
 void apply_time_stretch(short* input, short* output, int input_length, int* output_length, float speed_factor, int max_output_length) {
     *output_length = 0;
     
@@ -402,41 +402,37 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     int num_channels = wav_header.num_channels;
-    
-    // 使用较小的帧大小以减少对正弦波的影响
-    int frame_size = 256; // 更小的帧，对正弦波更友好
-    int hop_synthesis = frame_size / 8; // 更多重叠，更平滑
+    int frame_size = STRETCH_FRAME_SIZE; // 使用原来的512
+    int hop_synthesis = frame_size / 4; // 恢复原来的设置128
     int hop_analysis = (int)(hop_synthesis * speed_factor);
     
-    // 简单的汉明窗
-    static float window[256];
-    static bool window_init = false;
-    if (!window_init) {
-        for (int i = 0; i < 256; i++) {
-            window[i] = 0.54f - 0.46f * cosf(2.0f * M_PI * i / 255.0f);
+    // 汉宁窗函数
+    static float hanning_window[STRETCH_FRAME_SIZE];
+    static bool window_initialized = false;
+    if (!window_initialized) {
+        for (int i = 0; i < frame_size; i++) {
+            hanning_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (frame_size - 1)));
         }
-        window_init = true;
+        window_initialized = true;
     }
     
     int input_pos = 0;
     int output_pos = 0;
     
-    // 清零输出
+    // 清零输出缓冲区
     for (int i = 0; i < max_output_length; i++) {
         output[i] = 0;
     }
     
     while (input_pos + frame_size < input_length && output_pos + frame_size < max_output_length) {
-        // 对每个声道处理
         for (int ch = 0; ch < num_channels; ch++) {
             for (int i = 0; i < frame_size; i++) {
-                int in_idx = input_pos + i * num_channels + ch;
+                int sample_idx = input_pos + i * num_channels + ch;
                 int out_idx = output_pos + i * num_channels + ch;
                 
-                if (in_idx < input_length && out_idx < max_output_length) {
-                    // 应用窗函数并混合
-                    float windowed = input[in_idx] * window[i];
-                    output[out_idx] += (short)(windowed * 0.3f); // 较小的增益避免过载
+                if (sample_idx < input_length && out_idx < max_output_length) {
+                    float windowed_sample = input[sample_idx] * hanning_window[i];
+                    output[out_idx] += (short)(windowed_sample * 0.5f);
                 }
             }
         }
