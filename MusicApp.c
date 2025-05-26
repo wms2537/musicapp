@@ -432,20 +432,10 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // 0.5x使用重叠窗口方法，改善过渡平滑度
-        int frame_size = 512; // 中等帧大小
-        int hop_syn = frame_size / 2; // 256样本输出跳跃，75%重叠
-        int hop_ana = hop_syn / 2; // 128样本输入跳跃，实现0.5x
-        
-        // 使用标准汉宁窗但调整大小
-        static float smooth_hanning[512];
-        static bool smooth_window_init = false;
-        if (!smooth_window_init) {
-            for (int i = 0; i < 512; i++) {
-                smooth_hanning[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / 511.0f));
-            }
-            smooth_window_init = true;
-        }
+        // 0.5x使用与1.5x/2.0x完全相同的算法，只调整hop比例
+        int frame_size = STRETCH_FRAME_SIZE; // 与快速度相同的512
+        int hop_synthesis = frame_size / 4; // 与快速度相同的128
+        int hop_analysis = hop_synthesis / 2; // 64样本，实现0.5x速度
         
         input_pos = 0;
         output_pos = 0;
@@ -457,16 +447,16 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
                     int out_idx = output_pos + i * num_channels + ch;
                     
                     if (sample_idx < input_length && out_idx < max_output_length) {
-                        float windowed_sample = input[sample_idx] * smooth_hanning[i];
+                        float windowed_sample = input[sample_idx] * hanning_window[i];
                         
-                        // 重叠相加，使用适当增益
-                        output[out_idx] += (short)(windowed_sample * 0.4f);
+                        // 使用与1.5x/2.0x相同的增益
+                        output[out_idx] += (short)(windowed_sample * 0.5f);
                     }
                 }
             }
             
-            input_pos += hop_ana; // 128样本跳跃
-            output_pos += hop_syn; // 256样本跳跃，实现更平滑的过渡
+            input_pos += hop_analysis; // 64样本
+            output_pos += hop_synthesis; // 128样本
         }
         
         *output_length = output_pos;
