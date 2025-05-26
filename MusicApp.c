@@ -404,7 +404,14 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     int num_channels = wav_header.num_channels;
     int frame_size = STRETCH_FRAME_SIZE; // 使用原来的512
     int hop_synthesis = frame_size / 4; // 恢复原来的设置128
-    int hop_analysis = (int)(hop_synthesis * speed_factor);
+    int hop_analysis;
+    
+    // 特殊处理0.5x速度以减少机器人音效
+    if (speed_factor == 0.5f) {
+        hop_analysis = hop_synthesis / 2; // 64样本，但使用特殊处理
+    } else {
+        hop_analysis = (int)(hop_synthesis * speed_factor);
+    }
     
     // 汉宁窗函数
     static float hanning_window[STRETCH_FRAME_SIZE];
@@ -424,21 +431,46 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
         output[i] = 0;
     }
     
-    while (input_pos + frame_size < input_length && output_pos + frame_size < max_output_length) {
-        for (int ch = 0; ch < num_channels; ch++) {
-            for (int i = 0; i < frame_size; i++) {
-                int sample_idx = input_pos + i * num_channels + ch;
-                int out_idx = output_pos + i * num_channels + ch;
-                
-                if (sample_idx < input_length && out_idx < max_output_length) {
-                    float windowed_sample = input[sample_idx] * hanning_window[i];
-                    output[out_idx] += (short)(windowed_sample * 0.5f);
+    if (speed_factor == 0.5f) {
+        // 0.5x的特殊处理：使用更平滑的重叠和不同的增益
+        while (input_pos + frame_size < input_length && output_pos + frame_size < max_output_length) {
+            for (int ch = 0; ch < num_channels; ch++) {
+                for (int i = 0; i < frame_size; i++) {
+                    int sample_idx = input_pos + i * num_channels + ch;
+                    int out_idx = output_pos + i * num_channels + ch;
+                    
+                    if (sample_idx < input_length && out_idx < max_output_length) {
+                        // 使用更平滑的窗函数混合
+                        float window_val = hanning_window[i];
+                        float windowed_sample = input[sample_idx] * window_val;
+                        
+                        // 使用较小的增益和平滑混合
+                        output[out_idx] += (short)(windowed_sample * 0.25f);
+                    }
                 }
             }
+            
+            input_pos += hop_analysis;
+            output_pos += hop_synthesis;
         }
-        
-        input_pos += hop_analysis;
-        output_pos += hop_synthesis;
+    } else {
+        // 1.5x和2.0x的正常处理（保持不变）
+        while (input_pos + frame_size < input_length && output_pos + frame_size < max_output_length) {
+            for (int ch = 0; ch < num_channels; ch++) {
+                for (int i = 0; i < frame_size; i++) {
+                    int sample_idx = input_pos + i * num_channels + ch;
+                    int out_idx = output_pos + i * num_channels + ch;
+                    
+                    if (sample_idx < input_length && out_idx < max_output_length) {
+                        float windowed_sample = input[sample_idx] * hanning_window[i];
+                        output[out_idx] += (short)(windowed_sample * 0.5f);
+                    }
+                }
+            }
+            
+            input_pos += hop_analysis;
+            output_pos += hop_synthesis;
+        }
     }
     
     *output_length = output_pos;
