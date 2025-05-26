@@ -432,31 +432,31 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // 0.5x使用最简单的重复方法，避免电音和失真
-        float input_pos_float = 0.0f;
-        int output_pos = 0;
+        // 0.5x使用优化的重叠相加，减少电音但保持正确音调
+        int frame_size = STRETCH_FRAME_SIZE; // 使用标准帧大小512
+        int hop_synthesis = frame_size / 4; // 128样本输出跳跃  
+        int hop_analysis = hop_synthesis / 2; // 64样本输入跳跃，实现0.5x
         
-        // 简单但有效：每个输入样本输出两次，保持音调
-        while ((int)input_pos_float < input_length && output_pos < max_output_length - 1) {
-            int input_pos = (int)input_pos_float;
-            
+        input_pos = 0;
+        output_pos = 0;
+        
+        while (input_pos + frame_size < input_length && output_pos + frame_size < max_output_length) {
             for (int ch = 0; ch < num_channels; ch++) {
-                if (input_pos + ch < input_length) {
-                    short sample = input[input_pos + ch];
+                for (int i = 0; i < frame_size; i++) {
+                    int sample_idx = input_pos + i * num_channels + ch;
+                    int out_idx = output_pos + i * num_channels + ch;
                     
-                    // 每个样本输出两次，实现0.5x速度但保持音调
-                    if (output_pos < max_output_length) {
-                        output[output_pos] = sample;
-                        output_pos++;
-                    }
-                    if (output_pos < max_output_length) {
-                        output[output_pos] = sample;
-                        output_pos++;
+                    if (sample_idx < input_length && out_idx < max_output_length) {
+                        float windowed_sample = input[sample_idx] * hanning_window[i];
+                        
+                        // 使用更小的增益减少电音
+                        output[out_idx] += (short)(windowed_sample * 0.3f);
                     }
                 }
             }
             
-            input_pos_float += num_channels; // 前进一个完整帧
+            input_pos += hop_analysis; // 64样本跳跃
+            output_pos += hop_synthesis; // 128样本跳跃，保持正确的0.5x比例
         }
         
         *output_length = output_pos;
