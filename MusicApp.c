@@ -432,40 +432,39 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // 0.5x使用简化WSOLA保持音调不变
-        int window_size = 2048;     // 大窗口提高质量
-        int input_hop = 512;        // 输入跳跃
-        int output_hop = 1024;      // 输出跳跃（2x实现0.5x）
-        int overlap = 512;          // 重叠区域
+        // 0.5x保证完全连续的overlap-add
+        int grain_size = 1024;      // grain大小
+        int analysis_hop = 256;     // 输入步长（小）
+        int synthesis_hop = 512;    // 输出步长（大，2x实现0.5x）
         
-        // 简单矩形窗，避免复杂计算
         int input_pos = 0;
         int output_pos = 0;
         
-        while (input_pos + window_size < input_length && output_pos + output_hop < max_output_length) {
-            // 简单复制窗口，不做相关性搜索
-            for (int i = 0; i < window_size; i++) {
+        while (input_pos + grain_size < input_length && output_pos + grain_size < max_output_length) {
+            // 每个grain都完整复制，确保连续性
+            for (int i = 0; i < grain_size; i++) {
                 for (int ch = 0; ch < num_channels; ch++) {
                     int in_idx = input_pos + i * num_channels + ch;
                     int out_idx = output_pos + i * num_channels + ch;
                     
                     if (in_idx < input_length && out_idx < max_output_length) {
-                        if (i < overlap && output[out_idx] != 0) {
-                            // 简单线性混合overlap区域
-                            float weight = (float)i / overlap;
-                            float existing = output[out_idx];
-                            float new_sample = input[in_idx];
-                            output[out_idx] = (short)(existing * (1.0f - weight) + new_sample * weight);
+                        // 累加方式确保平滑过渡
+                        int existing = output[out_idx];
+                        int new_sample = input[in_idx];
+                        
+                        if (existing == 0) {
+                            output[out_idx] = new_sample;
                         } else {
-                            output[out_idx] = input[in_idx];
+                            // 使用加权平均，确保平滑
+                            output[out_idx] = (short)((existing + new_sample) / 2);
                         }
                     }
                 }
             }
             
-            // WSOLA核心：不同的输入输出步长实现时间拉伸但保持音调
-            input_pos += input_hop;   // 小步长
-            output_pos += output_hop; // 大步长，实现0.5x
+            // 关键比例：输入跳跃小，输出跳跃大
+            input_pos += analysis_hop;   // 前进256
+            output_pos += synthesis_hop; // 前进512，实现时间拉伸
         }
         
         *output_length = output_pos;
