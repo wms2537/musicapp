@@ -432,43 +432,29 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // 0.5x使用高质量插值而非重叠相加，避免电音
-        float input_pos_float = 0.0f;
+        // 0.5x使用最简单的重复采样，完全避免插值导致的电音
+        int input_pos = 0;
         int output_pos = 0;
         
-        // 使用3阶插值实现高质量慢速播放，保持音调
-        while (output_pos < max_output_length && (int)input_pos_float < input_length - num_channels * 3) {
-            int input_pos = (int)input_pos_float;
-            float frac = input_pos_float - input_pos;
-            
+        // 每个样本重复一次，简单有效
+        while (input_pos < input_length && output_pos + num_channels < max_output_length) {
+            // 复制当前帧
             for (int ch = 0; ch < num_channels; ch++) {
-                if (input_pos + ch + num_channels * 3 < input_length && output_pos < max_output_length) {
-                    // 4点3阶插值 (Hermite插值)
-                    short y0 = input[input_pos + ch];
-                    short y1 = input[input_pos + ch + num_channels];
-                    short y2 = input[input_pos + ch + num_channels * 2];
-                    short y3 = input[input_pos + ch + num_channels * 3];
-                    
-                    // 3阶Hermite插值公式
-                    float a = -0.5f * y0 + 1.5f * y1 - 1.5f * y2 + 0.5f * y3;
-                    float b = y0 - 2.5f * y1 + 2.0f * y2 - 0.5f * y3;
-                    float c = -0.5f * y0 + 0.5f * y2;
-                    float d = y1;
-                    
-                    float result = a * frac * frac * frac + b * frac * frac + c * frac + d;
-                    
-                    // 限制范围
-                    if (result > 32767) result = 32767;
-                    if (result < -32768) result = -32768;
-                    
-                    output[output_pos] = (short)result;
-                } else if (input_pos + ch < input_length && output_pos < max_output_length) {
-                    output[output_pos] = input[input_pos + ch];
+                if (input_pos + ch < input_length) {
+                    output[output_pos + ch] = input[input_pos + ch];
                 }
-                output_pos++;
             }
+            output_pos += num_channels;
             
-            input_pos_float += 0.5f * num_channels; // 0.5x速度
+            // 再复制一次相同的帧（0.5x效果）
+            for (int ch = 0; ch < num_channels; ch++) {
+                if (input_pos + ch < input_length && output_pos + ch < max_output_length) {
+                    output[output_pos + ch] = input[input_pos + ch];
+                }
+            }
+            output_pos += num_channels;
+            
+            input_pos += num_channels;
         }
         
         *output_length = output_pos;
