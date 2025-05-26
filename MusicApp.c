@@ -402,8 +402,19 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     
     int num_channels = wav_header.num_channels;
     int frame_size = STRETCH_FRAME_SIZE;
-    int hop_synthesis = frame_size / 4; // 合成跳跃（固定，保持音调）128 samples
-    int hop_analysis = (int)(hop_synthesis * speed_factor); // 分析跳跃（基于速度调整）
+    
+    // 为慢速和快速使用不同的策略
+    int hop_synthesis, hop_analysis;
+    if (speed_factor < 1.0f) {
+        // 慢速播放：需要更小的hop以获得更平滑的结果
+        hop_synthesis = frame_size / 8; // 更小的合成跳跃，更多重叠
+        hop_analysis = (int)(hop_synthesis * speed_factor);
+        if (hop_analysis < 1) hop_analysis = 1; // 防止为0
+    } else {
+        // 快速播放：标准策略
+        hop_synthesis = frame_size / 4;
+        hop_analysis = (int)(hop_synthesis * speed_factor);
+    }
     
     // 汉宁窗函数
     static float hanning_window[STRETCH_FRAME_SIZE];
@@ -435,8 +446,18 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
                     // 应用汉宁窗函数到输入样本
                     float windowed_sample = input[sample_idx] * hanning_window[i];
                     
-                    // 重叠相加到输出（使用适当的增益补偿）
-                    output[out_idx] += (short)(windowed_sample * 0.5f); // 0.5f是增益补偿
+                    // 根据速度调整增益补偿
+                    float gain_compensation;
+                    if (speed_factor < 1.0f) {
+                        // 慢速播放需要更强的混合
+                        gain_compensation = 0.3f; // 减少增益，增加平滑度
+                    } else {
+                        // 快速播放标准增益
+                        gain_compensation = 0.5f;
+                    }
+                    
+                    // 重叠相加到输出
+                    output[out_idx] += (short)(windowed_sample * gain_compensation);
                 }
             }
         }
