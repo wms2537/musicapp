@@ -432,41 +432,47 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // 0.5x使用优化的PSOLA算法，保持音调但减少电音
-        int grain_size = 256; // 较小的grain size减少电音
-        int hop_input = grain_size / 2; // 输入跳跃
-        int hop_output = grain_size; // 输出跳跃(2倍长度实现0.5x)
+        // 0.5x特殊处理：固定间距重叠，保持音调和音质
+        int window_size = 1024; // 更大的窗口更平滑
+        int hop_size = 256;     // 输入跳跃
+        int overlap_size = window_size - hop_size;
         
-        // 简化的汉宁窗
-        static float simple_window[256];
-        static bool simple_window_init = false;
-        if (!simple_window_init) {
-            for (int i = 0; i < grain_size; i++) {
-                simple_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (grain_size - 1)));
+        // 三角窗（比汉宁窗更平滑）
+        static float triangle_window[1024];
+        static bool tri_window_init = false;
+        if (!tri_window_init) {
+            for (int i = 0; i < window_size; i++) {
+                if (i < window_size / 2) {
+                    triangle_window[i] = (float)i / (window_size / 2);
+                } else {
+                    triangle_window[i] = 2.0f - (float)i / (window_size / 2);
+                }
             }
-            simple_window_init = true;
+            tri_window_init = true;
         }
         
         int input_pos = 0;
         int output_pos = 0;
         
-        while (input_pos + grain_size < input_length && output_pos + hop_output < max_output_length) {
-            // 处理每个声道
-            for (int ch = 0; ch < num_channels; ch++) {
-                for (int i = 0; i < grain_size; i++) {
-                    int in_idx = input_pos + i * num_channels + ch;
-                    int out_idx = output_pos + i * num_channels + ch;
-                    
-                    if (in_idx < input_length && out_idx < max_output_length) {
-                        // 应用窗函数，但减少强度
-                        float windowed = input[in_idx] * (0.7f + 0.3f * simple_window[i]);
-                        output[out_idx] += (short)(windowed * 0.6f); // 降低增益避免失真
+        while (input_pos + window_size < input_length && output_pos + window_size * 2 < max_output_length) {
+            // 每个输入窗口产生两个输出窗口（0.5x效果）
+            for (int copy = 0; copy < 2; copy++) {
+                for (int ch = 0; ch < num_channels; ch++) {
+                    for (int i = 0; i < window_size; i++) {
+                        int in_idx = input_pos + i * num_channels + ch;
+                        int out_idx = output_pos + copy * hop_size * 2 + i * num_channels + ch;
+                        
+                        if (in_idx < input_length && out_idx < max_output_length) {
+                            // 轻度窗函数，主要保持原始信号
+                            float windowed = input[in_idx] * (0.9f + 0.1f * triangle_window[i]);
+                            output[out_idx] += (short)(windowed * 0.5f);
+                        }
                     }
                 }
             }
             
-            input_pos += hop_input;
-            output_pos += hop_output;
+            input_pos += hop_size;
+            output_pos += hop_size * 2; // 0.5x速度
         }
         
         *output_length = output_pos;
