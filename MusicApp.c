@@ -42,6 +42,7 @@ int playlist_count = 0;
 int current_track = 0;
 long data_chunk_offset = 0; // Store the actual position of the data chunk
 bool track_change_requested = false; // Flag for manual track changes
+bool auto_next_requested = false; // Flag for automatic track changes
 
 // FIR滤波器系数 - 正确归一化的滤波器 (sum ≈ 1.0)
 static double bass_boost_coeffs[FIR_TAP_NUM] = {
@@ -927,6 +928,7 @@ int main(int argc, char *argv[]) {
     printf("Starting playback...\n");
     printf("Press 'h' for help, 'q' to quit\n");
     
+restart_playback:
     current_state = PLAYING;
     log_program_info("PLAYBACK", "Playback started");
     
@@ -1001,17 +1003,10 @@ int main(int argc, char *argv[]) {
         read_ret = fread(buff, 1, buffer_size, fp);
         if (read_ret == 0) {
             log_program_info("PLAYBACK", "End of current track");
-            // 自动切换到下一首
+            // 设置自动切换标志
             if (playlist_count > 1) {
-                current_track = (current_track + 1) % playlist_count;
-                log_user_operation("AUTO_NEXT_TRACK", "SUCCESS");
-                printf("自动切换到下一首: %s\n", playlist[current_track]);
-                fclose(fp);
-                if (!open_music_file(playlist[current_track])) {
-                    printf("ERROR: Failed to open next track: %s\n", playlist[current_track]);
-                    break;
-                }
-                continue;
+                auto_next_requested = true;
+                break; // 退出循环，在安全位置处理切换
             } else {
                 printf("End of music file input! (fread returned 0)\n");
                 break;
@@ -1088,36 +1083,48 @@ int main(int argc, char *argv[]) {
         
         if (read_ret < buffer_size) {
             log_program_info("PLAYBACK", "End of music file (partial buffer read)");
-            // 自动切换到下一首
-            if (playlist_count > 1) {
-                current_track = (current_track + 1) % playlist_count;
-                log_user_operation("AUTO_NEXT_TRACK", "SUCCESS");
-                printf("自动切换到下一首: %s\n", playlist[current_track]);
-                fclose(fp);
-                if (!open_music_file(playlist[current_track])) {
-                    printf("ERROR: Failed to open next track: %s\n", playlist[current_track]);
-                    break;
-                }
-                continue;
-            } else {
-                printf("End of playlist!\n");
-                break;
-            }
+            // 播放最后一块数据，下次循环read_ret==0时会触发切换
         }
     }
     
-    printf("DEBUG: Starting buffer cleanup\n");
-    if (filtered_buff) {
-        printf("DEBUG: Freeing filtered_buff\n");
-        free(filtered_buff);
-        filtered_buff = NULL;
+    // 处理自动切换到下一首
+    if (auto_next_requested) {
+        auto_next_requested = false;
+        current_track = (current_track + 1) % playlist_count;
+        log_user_operation("AUTO_NEXT_TRACK", "SUCCESS");
+        printf("自动切换到下一首: %s\n", playlist[current_track]);
+        
+        // 清理当前缓冲区
+        if (filtered_buff) {
+            free(filtered_buff);
+            filtered_buff = NULL;
+        }
+        if (temp_samples) {
+            free(temp_samples);
+            temp_samples = NULL;
+        }
+        
+        fclose(fp);
+        if (open_music_file(playlist[current_track])) {
+            // 重新开始播放循环
+            goto restart_playback;
+        } else {
+            printf("ERROR: Failed to open next track: %s\n", playlist[current_track]);
+        }
+    } else {
+        printf("DEBUG: Starting buffer cleanup\n");
+        if (filtered_buff) {
+            printf("DEBUG: Freeing filtered_buff\n");
+            free(filtered_buff);
+            filtered_buff = NULL;
+        }
+        if (temp_samples) {
+            printf("DEBUG: Freeing temp_samples\n");
+            free(temp_samples);
+            temp_samples = NULL;
+        }
+        printf("DEBUG: Buffer cleanup completed\n");
     }
-    if (temp_samples) {
-        printf("DEBUG: Freeing temp_samples\n");
-        free(temp_samples);
-        temp_samples = NULL;
-    }
-    printf("DEBUG: Buffer cleanup completed\n");
 
 playback_end:
     current_state = STOPPED;
