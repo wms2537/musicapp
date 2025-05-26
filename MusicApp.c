@@ -432,33 +432,65 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // 0.5x使用优化的重叠相加，减少伪影但保持音调
-        int smaller_frame = frame_size / 2; // 使用更小的帧256
-        int hop_syn_05 = smaller_frame / 4; // 64样本跳跃
-        int hop_ana_05 = hop_syn_05 / 2; // 32样本跳跃，实现0.5x
+        // 0.5x使用WSOLA方法：基于波形相似性的重叠相加
+        int grain_size = 128; // 小粒度，减少伪影
+        int search_region = 64; // 搜索区域
         
         input_pos = 0;
         output_pos = 0;
+        int prev_input_pos = 0;
         
-        while (input_pos + smaller_frame < input_length && output_pos + smaller_frame < max_output_length) {
+        while (input_pos + grain_size < input_length && output_pos + grain_size < max_output_length) {
+            // 寻找最佳匹配位置以减少不连续性
+            int best_pos = input_pos;
+            float best_correlation = -1.0f;
+            
+            // 在搜索区域内寻找最相似的波形
+            for (int search = 0; search < search_region && input_pos + search + grain_size < input_length; search++) {
+                float correlation = 0.0f;
+                int test_pos = input_pos + search;
+                
+                // 计算与前一个grain末尾的相关性
+                if (prev_input_pos > 0) {
+                    for (int i = 0; i < 32 && i < grain_size; i++) { // 只检查前32个样本
+                        for (int ch = 0; ch < num_channels; ch++) {
+                            int prev_idx = prev_input_pos + (grain_size - 32 + i) * num_channels + ch;
+                            int curr_idx = test_pos + i * num_channels + ch;
+                            
+                            if (prev_idx < input_length && curr_idx < input_length) {
+                                correlation += input[prev_idx] * input[curr_idx];
+                            }
+                        }
+                    }
+                }
+                
+                if (correlation > best_correlation) {
+                    best_correlation = correlation;
+                    best_pos = test_pos;
+                }
+            }
+            
+            // 复制最佳匹配的grain
             for (int ch = 0; ch < num_channels; ch++) {
-                for (int i = 0; i < smaller_frame; i++) {
-                    int sample_idx = input_pos + i * num_channels + ch;
+                for (int i = 0; i < grain_size; i++) {
+                    int sample_idx = best_pos + i * num_channels + ch;
                     int out_idx = output_pos + i * num_channels + ch;
                     
                     if (sample_idx < input_length && out_idx < max_output_length) {
-                        // 使用更温和的窗函数
-                        float window_val = hanning_window[i * 2]; // 映射到512窗口
-                        float windowed_sample = input[sample_idx] * window_val;
+                        // 在开始处应用淡入以平滑连接
+                        float fade_factor = 1.0f;
+                        if (i < 16) { // 淡入前16个样本
+                            fade_factor = (float)i / 16.0f;
+                        }
                         
-                        // 使用更小的增益
-                        output[out_idx] += (short)(windowed_sample * 0.2f);
+                        output[out_idx] = (short)(input[sample_idx] * fade_factor);
                     }
                 }
             }
             
-            input_pos += hop_ana_05;
-            output_pos += hop_syn_05;
+            prev_input_pos = best_pos;
+            input_pos = best_pos + grain_size / 2; // 0.5x速度
+            output_pos += grain_size;
         }
         
         *output_length = output_pos;
