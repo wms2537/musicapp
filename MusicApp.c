@@ -432,29 +432,41 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // 0.5x使用最简单的重复采样，完全避免插值导致的电音
+        // 0.5x使用优化的PSOLA算法，保持音调但减少电音
+        int grain_size = 256; // 较小的grain size减少电音
+        int hop_input = grain_size / 2; // 输入跳跃
+        int hop_output = grain_size; // 输出跳跃(2倍长度实现0.5x)
+        
+        // 简化的汉宁窗
+        static float simple_window[256];
+        static bool simple_window_init = false;
+        if (!simple_window_init) {
+            for (int i = 0; i < grain_size; i++) {
+                simple_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (grain_size - 1)));
+            }
+            simple_window_init = true;
+        }
+        
         int input_pos = 0;
         int output_pos = 0;
         
-        // 每个样本重复一次，简单有效
-        while (input_pos < input_length && output_pos + num_channels < max_output_length) {
-            // 复制当前帧
+        while (input_pos + grain_size < input_length && output_pos + hop_output < max_output_length) {
+            // 处理每个声道
             for (int ch = 0; ch < num_channels; ch++) {
-                if (input_pos + ch < input_length) {
-                    output[output_pos + ch] = input[input_pos + ch];
+                for (int i = 0; i < grain_size; i++) {
+                    int in_idx = input_pos + i * num_channels + ch;
+                    int out_idx = output_pos + i * num_channels + ch;
+                    
+                    if (in_idx < input_length && out_idx < max_output_length) {
+                        // 应用窗函数，但减少强度
+                        float windowed = input[in_idx] * (0.7f + 0.3f * simple_window[i]);
+                        output[out_idx] += (short)(windowed * 0.6f); // 降低增益避免失真
+                    }
                 }
             }
-            output_pos += num_channels;
             
-            // 再复制一次相同的帧（0.5x效果）
-            for (int ch = 0; ch < num_channels; ch++) {
-                if (input_pos + ch < input_length && output_pos + ch < max_output_length) {
-                    output[output_pos + ch] = input[input_pos + ch];
-                }
-            }
-            output_pos += num_channels;
-            
-            input_pos += num_channels;
+            input_pos += hop_input;
+            output_pos += hop_output;
         }
         
         *output_length = output_pos;
