@@ -386,7 +386,7 @@ bool open_music_file(const char *path_name) {
 }
 
 // FIR滤波器实现
-// 保持音调的时间拉伸算法 - PSOLA启发的方法
+// 保持音调的时间拉伸算法 - 混合方法
 void apply_time_stretch(short* input, short* output, int input_length, int* output_length, float speed_factor, int max_output_length) {
     *output_length = 0;
     
@@ -401,86 +401,78 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     int num_channels = wav_header.num_channels;
-    int frame_size = STRETCH_FRAME_SIZE;
     
-    // 为慢速和快速使用不同的策略
-    int hop_synthesis, hop_analysis;
+    // 对慢速使用简单插值，对快速使用PSOLA方法
     if (speed_factor < 1.0f) {
-        // 慢速播放：需要更小的hop以获得更平滑的结果
-        hop_synthesis = frame_size / 8; // 更小的合成跳跃，更多重叠
-        hop_analysis = (int)(hop_synthesis * speed_factor);
-        if (hop_analysis < 1) hop_analysis = 1; // 防止为0
-    } else {
-        // 快速播放：标准策略
-        hop_synthesis = frame_size / 4;
-        hop_analysis = (int)(hop_synthesis * speed_factor);
-    }
-    
-    // 汉宁窗函数
-    static float hanning_window[STRETCH_FRAME_SIZE];
-    static bool window_initialized = false;
-    if (!window_initialized) {
-        for (int i = 0; i < frame_size; i++) {
-            hanning_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (frame_size - 1)));
-        }
-        window_initialized = true;
-    }
-    
-    int input_pos = 0;
-    int output_pos = 0;
-    
-    // 清零输出缓冲区
-    for (int i = 0; i < max_output_length; i++) {
-        output[i] = 0;
-    }
-    
-    while (input_pos + frame_size < input_length && output_pos + frame_size < max_output_length) {
-        // 对每个声道分别处理
-        for (int ch = 0; ch < num_channels; ch++) {
-            // 提取当前帧并应用窗函数
-            for (int i = 0; i < frame_size; i++) {
-                int sample_idx = input_pos + i * num_channels + ch;
-                int out_idx = output_pos + i * num_channels + ch;
-                
-                if (sample_idx < input_length && out_idx < max_output_length) {
-                    // 应用汉宁窗函数到输入样本
-                    float windowed_sample = input[sample_idx] * hanning_window[i];
+        // 慢速播放：使用简单的线性插值，避免电音效果
+        float input_pos_float = 0.0f;
+        int output_pos = 0;
+        
+        while (output_pos < max_output_length && (int)input_pos_float < input_length - num_channels) {
+            int input_pos = (int)input_pos_float;
+            float frac = input_pos_float - input_pos;
+            
+            for (int ch = 0; ch < num_channels; ch++) {
+                if (input_pos + ch + num_channels < input_length && output_pos < max_output_length) {
+                    short sample1 = input[input_pos + ch];
+                    short sample2 = input[input_pos + ch + num_channels];
                     
-                    // 根据速度调整增益补偿
-                    float gain_compensation;
-                    if (speed_factor < 1.0f) {
-                        // 慢速播放需要更强的混合
-                        gain_compensation = 0.3f; // 减少增益，增加平滑度
-                    } else {
-                        // 快速播放标准增益
-                        gain_compensation = 0.5f;
-                    }
-                    
-                    // 重叠相加到输出
-                    output[out_idx] += (short)(windowed_sample * gain_compensation);
+                    // 简单线性插值
+                    short interpolated = (short)(sample1 * (1.0f - frac) + sample2 * frac);
+                    output[output_pos] = interpolated;
+                } else if (input_pos + ch < input_length && output_pos < max_output_length) {
+                    output[output_pos] = input[input_pos + ch];
                 }
+                output_pos++;
             }
+            
+            input_pos_float += speed_factor;
         }
         
-        input_pos += hop_analysis;
-        output_pos += hop_synthesis;
-    }
-    
-    // 归一化输出以避免过载
-    float max_val = 0.0f;
-    for (int i = 0; i < output_pos && i < max_output_length; i++) {
-        float val = fabsf((float)output[i]);
-        if (val > max_val) max_val = val;
-    }
-    
-    if (max_val > 32767.0f) {
-        float scale = 32767.0f / max_val;
-        for (int i = 0; i < output_pos && i < max_output_length; i++) {
-            output[i] = (short)(output[i] * scale);
+        *output_length = output_pos;
+    } else {
+        // 快速播放：使用PSOLA方法
+        int frame_size = STRETCH_FRAME_SIZE;
+        int hop_synthesis = frame_size / 4;
+        int hop_analysis = (int)(hop_synthesis * speed_factor);
+        
+        // 汉宁窗函数
+        static float hanning_window[STRETCH_FRAME_SIZE];
+        static bool window_initialized = false;
+        if (!window_initialized) {
+            for (int i = 0; i < frame_size; i++) {
+                hanning_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (frame_size - 1)));
+            }
+            window_initialized = true;
         }
+        
+        int input_pos = 0;
+        int output_pos = 0;
+        
+        // 清零输出缓冲区
+        for (int i = 0; i < max_output_length; i++) {
+            output[i] = 0;
+        }
+        
+        while (input_pos + frame_size < input_length && output_pos + frame_size < max_output_length) {
+            for (int ch = 0; ch < num_channels; ch++) {
+                for (int i = 0; i < frame_size; i++) {
+                    int sample_idx = input_pos + i * num_channels + ch;
+                    int out_idx = output_pos + i * num_channels + ch;
+                    
+                    if (sample_idx < input_length && out_idx < max_output_length) {
+                        float windowed_sample = input[sample_idx] * hanning_window[i];
+                        output[out_idx] += (short)(windowed_sample * 0.5f);
+                    }
+                }
+            }
+            
+            input_pos += hop_analysis;
+            output_pos += hop_synthesis;
+        }
+        
+        *output_length = output_pos;
     }
-    
-    *output_length = output_pos;
 }
 
 void apply_fir_filter(short* input, short* output, int length, equalizer_mode_t mode) {
