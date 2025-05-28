@@ -560,14 +560,18 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
             // 更新位置
             output_pos += synthesis_hop;
             
-            // WSOLA自适应输入位置更新
-            // 根据找到的最佳匹配调整下一次的输入位置
-            int adaptive_hop = (best_match_pos - input_pos) + synthesis_hop / 2;
-            input_pos = best_match_pos + adaptive_hop;
+            // 固定输入步长以保持恒定速度
+            // 对于0.5x，输入步长应该是输出步长的一半
+            int analysis_hop = synthesis_hop / 2; // 128 samples for consistent 0.5x speed
+            input_pos += analysis_hop;
             
-            // 确保输入位置不会倒退太多
-            if (input_pos < best_match_pos + synthesis_hop / 4) {
-                input_pos = best_match_pos + synthesis_hop / 4;
+            // 可选的微调：如果找到了很好的匹配，稍微调整位置
+            if (max_correlation > 0.8f) {
+                int match_offset = best_match_pos - (input_pos - analysis_hop);
+                // 限制调整幅度，避免破坏时间一致性
+                if (match_offset > -16 && match_offset < 16) {
+                    input_pos += match_offset / 4; // 轻微调整
+                }
             }
         }
         
