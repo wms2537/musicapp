@@ -426,10 +426,12 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     // 汉宁窗函数
     static float hanning_window[STRETCH_FRAME_SIZE];
     static bool window_initialized = false;
+    static bool window_init_0_5x = false;
     
     // 重置静态变量（文件切换时）
     if (need_reset_static_vars) {
         window_initialized = false;
+        window_init_0_5x = false;
         need_reset_static_vars = false;
     }
     
@@ -449,39 +451,124 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // 0.5x保证完全连续的overlap-add
-        int grain_size = 1024;      // grain大小
-        int analysis_hop = 256;     // 输入步长（小）
-        int synthesis_hop = 512;    // 输出步长（大，2x实现0.5x）
+        // 0.5x 使用完整的WSOLA算法 (Waveform Similarity Overlap-Add)
+        int frame_size = 512;
+        int synthesis_hop = 256;     // 输出步长 (2x for 0.5x speed)
+        int overlap_size = 128;      // 重叠区域大小
+        int template_size = 64;      // 模板匹配大小
+        int search_range = 64;       // 搜索范围
         
-        int input_pos = 0;
         int output_pos = 0;
+        int input_pos = 0;
         
-        while (input_pos + grain_size < input_length && output_pos + grain_size < max_output_length) {
-            // 每个grain都完整复制，确保连续性
-            for (int i = 0; i < grain_size; i++) {
-                for (int ch = 0; ch < num_channels; ch++) {
-                    int in_idx = input_pos + i * num_channels + ch;
-                    int out_idx = output_pos + i * num_channels + ch;
-                    
-                    if (in_idx < input_length && out_idx < max_output_length) {
-                        // 累加方式确保平滑过渡
-                        int existing = output[out_idx];
-                        int new_sample = input[in_idx];
+        // 创建分析窗和合成窗
+        static float analysis_window[512];
+        static float synthesis_window[512];
+        
+        if (!window_init_0_5x) {
+            for (int i = 0; i < frame_size; i++) {
+                // 分析窗 (用于相关性计算)
+                analysis_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (frame_size - 1)));
+                // 合成窗 (用于overlap-add)
+                synthesis_window[i] = analysis_window[i];
+            }
+            window_init_0_5x = true;
+        }
+        
+        while (input_pos + frame_size < input_length && output_pos + frame_size < max_output_length) {
+            int best_match_pos = input_pos;
+            float max_correlation = -1.0f;
+            
+            // WSOLA核心: 在搜索范围内寻找最佳匹配
+            for (int search_offset = -search_range; search_offset <= search_range; search_offset++) {
+                int candidate_pos = input_pos + search_offset;
+                
+                // 边界检查
+                if (candidate_pos < 0 || candidate_pos + frame_size >= input_length) {
+                    continue;
+                }
+                
+                // 计算归一化互相关 (Normalized Cross-Correlation)
+                float correlation = 0.0f;
+                float template_energy = 0.0f;
+                float candidate_energy = 0.0f;
+                
+                // 构建模板：从已生成的输出中取最后template_size个样本
+                for (int i = 0; i < template_size && i < overlap_size; i++) {
+                    for (int ch = 0; ch < num_channels; ch++) {
+                        int template_idx = output_pos - template_size + i;
+                        int candidate_idx = candidate_pos + i * num_channels + ch;
                         
-                        if (existing == 0) {
-                            output[out_idx] = new_sample;
-                        } else {
-                            // 使用加权平均，确保平滑
-                            output[out_idx] = (short)((existing + new_sample) / 2);
+                        if (template_idx >= 0 && template_idx < max_output_length && 
+                            candidate_idx < input_length) {
+                            
+                            float template_sample = (float)output[template_idx * num_channels + ch];
+                            float candidate_sample = (float)input[candidate_idx];
+                            
+                            // 应用窗函数进行加权
+                            float weight = analysis_window[i];
+                            template_sample *= weight;
+                            candidate_sample *= weight;
+                            
+                            correlation += template_sample * candidate_sample;
+                            template_energy += template_sample * template_sample;
+                            candidate_energy += candidate_sample * candidate_sample;
                         }
+                    }
+                }
+                
+                // 归一化相关性 (避免除零)
+                if (template_energy > 0.0f && candidate_energy > 0.0f) {
+                    float normalized_correlation = correlation / sqrtf(template_energy * candidate_energy);
+                    
+                    if (normalized_correlation > max_correlation) {
+                        max_correlation = normalized_correlation;
+                        best_match_pos = candidate_pos;
                     }
                 }
             }
             
-            // 关键比例：输入跳跃小，输出跳跃大
-            input_pos += analysis_hop;   // 前进256
-            output_pos += synthesis_hop; // 前进512，实现时间拉伸
+            // 使用最佳匹配位置进行overlap-add合成
+            for (int i = 0; i < frame_size; i++) {
+                for (int ch = 0; ch < num_channels; ch++) {
+                    int in_idx = best_match_pos + i * num_channels + ch;
+                    int out_idx = output_pos + i * num_channels + ch;
+                    
+                    if (in_idx < input_length && out_idx < max_output_length) {
+                        float new_sample = (float)input[in_idx] * synthesis_window[i];
+                        
+                        if (i < overlap_size && output_pos > 0) {
+                            // 重叠区域：使用线性插值进行平滑过渡
+                            float overlap_weight = (float)i / overlap_size;
+                            float existing_sample = (float)output[out_idx];
+                            
+                            // WSOLA重叠合成：加权组合
+                            output[out_idx] = (short)(existing_sample * (1.0f - overlap_weight) + 
+                                                    new_sample * overlap_weight);
+                        } else {
+                            // 非重叠区域：直接使用新样本
+                            output[out_idx] = (short)new_sample;
+                        }
+                        
+                        // 防止溢出
+                        if (output[out_idx] > 32767) output[out_idx] = 32767;
+                        if (output[out_idx] < -32768) output[out_idx] = -32768;
+                    }
+                }
+            }
+            
+            // 更新位置
+            output_pos += synthesis_hop;
+            
+            // WSOLA自适应输入位置更新
+            // 根据找到的最佳匹配调整下一次的输入位置
+            int adaptive_hop = (best_match_pos - input_pos) + synthesis_hop / 2;
+            input_pos = best_match_pos + adaptive_hop;
+            
+            // 确保输入位置不会倒退太多
+            if (input_pos < best_match_pos + synthesis_hop / 4) {
+                input_pos = best_match_pos + synthesis_hop / 4;
+            }
         }
         
         *output_length = output_pos;
