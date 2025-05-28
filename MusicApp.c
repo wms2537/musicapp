@@ -486,152 +486,74 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     int num_channels = wav_header.num_channels;
-    int frame_size = STRETCH_FRAME_SIZE; // 使用原来的512
-    int hop_synthesis = frame_size / 4; // 恢复原来的设置128
-    int hop_analysis;
     
-    // 特殊处理0.5x速度以减少机器人音效
-    if (speed_factor == 0.5f) {
-        hop_analysis = hop_synthesis / 2; // 64样本，但使用特殊处理
-    } else {
-        hop_analysis = (int)(hop_synthesis * speed_factor);
+    // Debug output
+    static bool debug_printed = false;
+    if (!debug_printed || need_reset_static_vars) {
+        printf("[%.1fx Pitch-Preserving PSOLA] Channels: %d\n", speed_factor, num_channels);
+        debug_printed = true;
     }
     
-    // 汉宁窗函数
-    static float hanning_window[STRETCH_FRAME_SIZE];
-    static bool window_initialized = false;
-    static bool window_init_0_5x = false;
-    static bool phase_vocoder_init = false;
-    
-    // 重置静态变量（文件切换时）
-    if (need_reset_static_vars) {
-        window_initialized = false;
-        window_init_0_5x = false;
-        phase_vocoder_init = false;
-        need_reset_static_vars = false;
+    // Clear output buffer
+    for (int i = 0; i < max_output_length; i++) {
+        output[i] = 0;
     }
     
-    if (!window_initialized) {
-        for (int i = 0; i < frame_size; i++) {
-            hanning_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (frame_size - 1)));
+    // PSOLA parameters - adaptive to speed
+    int grain_size = 512;  // Fixed grain size for pitch preservation
+    int overlap_size = grain_size / 4;  // 25% overlap
+    
+    // Calculate hop sizes for time stretching
+    int input_hop = overlap_size;  // How much input we advance each time
+    int output_hop = (int)(overlap_size / speed_factor);  // How much output we advance
+    
+    if (output_hop <= 0) output_hop = 1;
+    
+    printf("[%.1fx] Grain: %d, Overlap: %d, Input hop: %d, Output hop: %d\n", 
+           speed_factor, grain_size, overlap_size, input_hop, output_hop);
+    
+    // Create Hanning window
+    static float window[512];
+    static bool window_init = false;
+    if (!window_init || need_reset_static_vars) {
+        for (int i = 0; i < grain_size; i++) {
+            window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (grain_size - 1)));
         }
-        window_initialized = true;
+        window_init = true;
     }
     
     int input_pos = 0;
     int output_pos = 0;
     
-    // 清零输出缓冲区
-    for (int i = 0; i < max_output_length; i++) {
-        output[i] = 0;
+    // PSOLA main loop
+    while (input_pos + grain_size <= input_length && output_pos < max_output_length) {
+        
+        // Apply grain with overlap-add
+        for (int i = 0; i < grain_size; i++) {
+            for (int ch = 0; ch < num_channels; ch++) {
+                int in_idx = input_pos + i * num_channels + ch;
+                int out_idx = output_pos + i * num_channels + ch;
+                
+                if (in_idx < input_length && out_idx < max_output_length) {
+                    // Apply window and add to output
+                    float windowed_sample = input[in_idx] * window[i];
+                    
+                    // Overlap-add with proper scaling
+                    output[out_idx] += (short)(windowed_sample * 0.5f);
+                    
+                    // Prevent overflow
+                    if (output[out_idx] > 32767) output[out_idx] = 32767;
+                    if (output[out_idx] < -32768) output[out_idx] = -32768;
+                }
+            }
+        }
+        
+        // Advance positions
+        input_pos += input_hop * num_channels;
+        output_pos += output_hop * num_channels;
     }
     
-    if (speed_factor == 0.5f) {
-        // Simple granular synthesis for 0.5x speed
-        int sample_rate = wav_header.sample_rate;
-        
-        // Debug output
-        static bool debug_printed_simple = false;
-        if (!debug_printed_simple || need_reset_static_vars) {
-            printf("[0.5x Granular] Sample Rate: %d Hz, Channels: %d\n", sample_rate, num_channels);
-            printf("[0.5x Granular] Grain size: %d samples\n", 1024);
-            debug_printed_simple = true;
-        }
-        
-        // Granular synthesis parameters
-        int grain_size = 1024;  // Fixed grain size
-        int grain_hop = grain_size / 2;  // 50% overlap between grains
-        
-        // For 0.5x speed: repeat each grain once
-        int output_pos = 0;
-        
-        for (int input_pos = 0; input_pos + grain_size <= input_length && 
-             output_pos < max_output_length; input_pos += grain_hop) {
-            
-            // Output the same grain twice for 0.5x speed
-            for (int repeat = 0; repeat < 2; repeat++) {
-                // Simple crossfade between repetitions
-                for (int i = 0; i < grain_size && output_pos < max_output_length; i++) {
-                    float fade = 1.0f;
-                    
-                    // Apply fade in/out at grain boundaries
-                    if (i < grain_size / 8) {
-                        fade = (float)i / (grain_size / 8);
-                    } else if (i > 7 * grain_size / 8) {
-                        fade = (float)(grain_size - i) / (grain_size / 8);
-                    }
-                    
-                    for (int ch = 0; ch < num_channels; ch++) {
-                        int in_idx = input_pos + i * num_channels + ch;
-                        if (in_idx < input_length) {
-                            output[output_pos++] = (short)(input[in_idx] * fade);
-                        }
-                    }
-                }
-            }
-        }
-        
-        *output_length = output_pos;
-        return;
-    } else {
-        // For 1.5x and 2.0x speeds - simple frame repeat/skip for pitch preservation
-        
-        // Debug output for other speeds
-        static bool debug_printed_other = false;
-        if (!debug_printed_other || need_reset_static_vars) {
-            printf("[%.1fx Pitch-Preserving] Using frame repeat/skip method\n", speed_factor);
-            debug_printed_other = true;
-        }
-        
-        // Simple approach: 
-        // For 1.5x: process 3 frames, output 2 frames (skip every 3rd)
-        // For 2.0x: process 2 frames, output 1 frame (skip every 2nd)
-        
-        int frame_size = 128;  // Small frames to minimize artifacts
-        int frames_to_process, frames_to_output;
-        
-        if (speed_factor == 1.5f) {
-            frames_to_process = 3;
-            frames_to_output = 2;
-        } else if (speed_factor == 2.0f) {
-            frames_to_process = 2;
-            frames_to_output = 1;
-        } else {
-            // Fallback for other speeds
-            frames_to_process = 4;
-            frames_to_output = (int)(4 / speed_factor);
-            if (frames_to_output <= 0) frames_to_output = 1;
-        }
-        
-        printf("[%.1fx] Frame size: %d, Process: %d frames, Output: %d frames\n", 
-               speed_factor, frame_size, frames_to_process, frames_to_output);
-        
-        int input_pos = 0;
-        int output_pos = 0;
-        
-        while (input_pos + frames_to_process * frame_size <= input_length && 
-               output_pos + frames_to_output * frame_size <= max_output_length) {
-            
-            // Copy the first N frames (skip the rest)
-            for (int frame = 0; frame < frames_to_output; frame++) {
-                for (int i = 0; i < frame_size; i++) {
-                    for (int ch = 0; ch < num_channels; ch++) {
-                        int in_idx = input_pos + frame * frame_size * num_channels + i * num_channels + ch;
-                        int out_idx = output_pos + frame * frame_size * num_channels + i * num_channels + ch;
-                        
-                        if (in_idx < input_length && out_idx < max_output_length) {
-                            output[out_idx] = input[in_idx];
-                        }
-                    }
-                }
-            }
-            
-            input_pos += frames_to_process * frame_size * num_channels;
-            output_pos += frames_to_output * frame_size * num_channels;
-        }
-        
-        *output_length = output_pos;
-    }
+    *output_length = output_pos;
     
     // Reset the flag after processing
     need_reset_static_vars = false;

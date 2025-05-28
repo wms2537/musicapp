@@ -1,0 +1,1 @@
+Pitch should be preserved when changing play speed
