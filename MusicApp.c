@@ -961,11 +961,7 @@ int main(int argc, char *argv[]) {
     printf("Starting playback...\n");
     printf("Press 'h' for help, 'q' to quit\n");
     
-restart_playback:
-    current_state = PLAYING;
-    log_program_info("PLAYBACK", "Playback started");
-    
-    // 分配滤波后的缓冲区
+    // 分配滤波后的缓冲区 (do this once outside the restart loop)
     unsigned char *filtered_buff = (unsigned char *)malloc(buffer_size);
     if (filtered_buff == NULL) {
         log_program_info("ERROR", "Failed to allocate filtered buffer");
@@ -981,6 +977,10 @@ restart_playback:
         if (buff) free(buff);
         exit(EXIT_FAILURE);
     }
+
+restart_playback:
+    current_state = PLAYING;
+    log_program_info("PLAYBACK", "Playback started");
     
     int read_ret;
     int speed_skip_counter = 0;
@@ -1021,6 +1021,35 @@ restart_playback:
                 break;
             }
             printf("DEBUG: Opened new file successfully\n");
+            
+            // 检查新文件的音频参数是否与当前ALSA配置匹配
+            if (wav_header.sample_rate != rate || wav_header.num_channels != 2) {
+                printf("DEBUG: Audio parameters changed, need to reconfigure ALSA\n");
+                printf("DEBUG: Old: %u Hz, New: %u Hz\n", rate, wav_header.sample_rate);
+                
+                // 重新配置ALSA以匹配新文件
+                snd_pcm_drop(pcm_handle);
+                snd_pcm_hw_params_malloc(&hw_params);
+                snd_pcm_hw_params_any(pcm_handle, hw_params);
+                snd_pcm_hw_params_set_access(pcm_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
+                snd_pcm_hw_params_set_format(pcm_handle, hw_params, pcm_format);
+                
+                rate = wav_header.sample_rate;
+                unsigned int actual_rate_from_alsa = rate;
+                snd_pcm_hw_params_set_rate_near(pcm_handle, hw_params, &actual_rate_from_alsa, 0);
+                snd_pcm_hw_params_set_channels(pcm_handle, hw_params, wav_header.num_channels);
+                
+                snd_pcm_uframes_t local_period_size_frames = period_size / wav_header.block_align;
+                frames = buffer_size / wav_header.block_align;
+                snd_pcm_hw_params_set_buffer_size_near(pcm_handle, hw_params, &frames);
+                snd_pcm_hw_params_set_period_size_near(pcm_handle, hw_params, &local_period_size_frames, 0);
+                
+                snd_pcm_hw_params(pcm_handle, hw_params);
+                snd_pcm_hw_params_free(hw_params);
+                snd_pcm_prepare(pcm_handle);
+                
+                printf("DEBUG: ALSA reconfigured for new audio parameters\n");
+            }
             continue;
         }
         
@@ -1129,6 +1158,34 @@ restart_playback:
         
         fclose(fp);
         if (open_music_file(playlist[current_track])) {
+            // 检查新文件的音频参数是否与当前ALSA配置匹配
+            if (wav_header.sample_rate != rate) {
+                printf("DEBUG: Auto-switch audio parameters changed, need to reconfigure ALSA\n");
+                printf("DEBUG: Old: %u Hz, New: %u Hz\n", rate, wav_header.sample_rate);
+                
+                // 重新配置ALSA以匹配新文件
+                snd_pcm_drop(pcm_handle);
+                snd_pcm_hw_params_malloc(&hw_params);
+                snd_pcm_hw_params_any(pcm_handle, hw_params);
+                snd_pcm_hw_params_set_access(pcm_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
+                snd_pcm_hw_params_set_format(pcm_handle, hw_params, pcm_format);
+                
+                rate = wav_header.sample_rate;
+                unsigned int actual_rate_from_alsa = rate;
+                snd_pcm_hw_params_set_rate_near(pcm_handle, hw_params, &actual_rate_from_alsa, 0);
+                snd_pcm_hw_params_set_channels(pcm_handle, hw_params, wav_header.num_channels);
+                
+                snd_pcm_uframes_t local_period_size_frames = period_size / wav_header.block_align;
+                frames = buffer_size / wav_header.block_align;
+                snd_pcm_hw_params_set_buffer_size_near(pcm_handle, hw_params, &frames);
+                snd_pcm_hw_params_set_period_size_near(pcm_handle, hw_params, &local_period_size_frames, 0);
+                
+                snd_pcm_hw_params(pcm_handle, hw_params);
+                snd_pcm_hw_params_free(hw_params);
+                snd_pcm_prepare(pcm_handle);
+                
+                printf("DEBUG: ALSA reconfigured for auto-switch new audio parameters\n");
+            }
             // 重新开始播放循环，buffers will be cleaned up automatically at the end
             goto restart_playback;
         } else {
