@@ -46,24 +46,24 @@ bool auto_next_requested = false; // Flag for automatic track changes
 
 // FIR滤波器系数 - 正确归一化的滤波器 (sum ≈ 1.0)
 static double bass_boost_coeffs[FIR_TAP_NUM] = {
-    -0.005, -0.005, -0.005, 0.0, 0.01, 0.02, 0.03, 0.04,
-    0.05, 0.06, 0.07, 0.08, 0.09, 0.09, 0.09, 0.08,
-    0.08, 0.09, 0.09, 0.09, 0.08, 0.07, 0.06, 0.05,
-    0.04, 0.03, 0.02, 0.01, 0.0, -0.005, -0.005, -0.005
+    -0.00360, -0.00360, -0.00360, 0.00000, 0.00719, 0.01439, 0.02158, 0.02878,
+     0.03597,  0.04317,  0.05036, 0.05755, 0.06475, 0.06475, 0.06475, 0.05755,
+     0.05755,  0.06475,  0.06475, 0.06475, 0.05755, 0.05036, 0.04317, 0.03597,
+     0.02878,  0.02158,  0.01439, 0.00719, 0.00000, -0.00360, -0.00360, -0.00360
 };
 
 static double treble_boost_coeffs[FIR_TAP_NUM] = {
-    0.01, 0.005, 0.0, -0.01, -0.025, -0.04, -0.05, -0.04,
-    -0.02, 0.01, 0.05, 0.10, 0.15, 0.19, 0.21, 0.22,
-    0.22, 0.21, 0.19, 0.15, 0.10, 0.05, 0.01, -0.02,
-    -0.04, -0.05, -0.04, -0.025, -0.01, 0.0, 0.005, 0.01
+     0.00658,  0.00329,  0.00000, -0.00658, -0.01645, -0.02632, -0.03289, -0.02632,
+    -0.01316,  0.00658,  0.03289,  0.06579,  0.09868,  0.12500,  0.13816,  0.14474,
+     0.14474,  0.13816,  0.12500,  0.09868,  0.06579,  0.03289,  0.00658, -0.01316,
+    -0.02632, -0.03289, -0.02632, -0.01645, -0.00658,  0.00000,  0.00329,  0.00658
 };
 
 static double vocal_enhance_coeffs[FIR_TAP_NUM] = {
-    0.005, 0.005, 0.01, 0.01, 0.015, 0.02, 0.025, 0.03,
-    0.04, 0.05, 0.06, 0.075, 0.09, 0.10, 0.11, 0.115,
-    0.115, 0.11, 0.10, 0.09, 0.075, 0.06, 0.05, 0.04,
-    0.03, 0.025, 0.02, 0.015, 0.01, 0.01, 0.005, 0.005
+     0.00336,  0.00336,  0.00671,  0.00671,  0.01007,  0.01342,  0.01678,  0.02013,
+     0.02685,  0.03356,  0.04027,  0.05034,  0.06040,  0.06711,  0.07383,  0.07718,
+     0.07718,  0.07383,  0.06711,  0.06040,  0.05034,  0.04027,  0.03356,  0.02685,
+     0.02013,  0.01678,  0.01342,  0.01007,  0.00671,  0.00671,  0.00336,  0.00336
 };
 
 static short delay_buffer_left[FIR_TAP_NUM] = {0};
@@ -524,115 +524,123 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // Use WSOLA for 0.5x speed
+        // Fixed WSOLA for 0.5x speed - proper overlap-add without windowing artifacts
         int frame_size = 512;
-        int synthesis_hop = 256;     // 输出步长 (2x for 0.5x speed)
-        int overlap_size = 128;      // 重叠区域大小
-        int template_size = 128;      // 模板匹配大小 (Increased from 64)
-        int search_range = 128;       // 搜索范围 (Increased from 64)
+        int analysis_hop = 128;      // Input hop size
+        int synthesis_hop = 256;     // Output hop size (2x analysis for 0.5x speed)
+        int overlap_size = 256;      // 50% overlap for smooth transitions
+        int search_range = 64;       // Search range for best match
         
-        // 创建分析窗和合成窗
-        static float analysis_window[512];
-        static float synthesis_window[512];
+        // Static buffers for state preservation between calls
+        static float overlap_buffer[2048] = {0};  // For storing overlap region
+        static int overlap_valid_samples = 0;
+        static bool first_frame = true;
+        
+        // Reset on file change
+        if (need_reset_static_vars) {
+            for (int i = 0; i < 2048; i++) overlap_buffer[i] = 0;
+            overlap_valid_samples = 0;
+            first_frame = true;
+        }
+        
+        // Create fade in/out windows for overlap region only
+        static float fade_in[256];
+        static float fade_out[256];
         
         if (!window_init_0_5x) {
-            for (int i = 0; i < frame_size; i++) {
-                // 分析窗 (用于相关性计算)
-                analysis_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (frame_size - 1)));
-                // 合成窗 (用于overlap-add)
-                synthesis_window[i] = analysis_window[i];
+            for (int i = 0; i < overlap_size; i++) {
+                // Linear fade for simplicity and to avoid amplitude modulation
+                fade_in[i] = (float)i / (overlap_size - 1);
+                fade_out[i] = 1.0f - fade_in[i];
             }
             window_init_0_5x = true;
         }
         
-        while (input_pos + frame_size < input_length && output_pos + frame_size < max_output_length) {
+        while (input_pos + frame_size < input_length && output_pos + synthesis_hop < max_output_length) {
             int best_match_pos = input_pos;
-            float max_correlation = -1.0f;
             
-            // WSOLA核心: 在搜索范围内寻找最佳匹配
-            for (int search_offset = -search_range; search_offset <= search_range; search_offset++) {
-                int candidate_pos = input_pos + search_offset;
+            // For first frame or when no overlap exists, just use current position
+            if (!first_frame && overlap_valid_samples > 0) {
+                float max_correlation = -1.0f;
                 
-                // 边界检查
-                if (candidate_pos < 0 || candidate_pos + frame_size >= input_length) {
-                    continue;
-                }
-                
-                // 计算归一化互相关 (Normalized Cross-Correlation)
-                float correlation = 0.0f;
-                float template_energy = 0.0f;
-                float candidate_energy = 0.0f;
-                
-                // 构建模板：从已生成的输出中取最后template_size个样本
-                for (int i = 0; i < template_size && i < overlap_size; i++) {
-                    for (int ch = 0; ch < num_channels; ch++) {
-                        int template_idx = output_pos - template_size + i;
-                        int candidate_idx = candidate_pos + i * num_channels + ch;
-                        
-                        if (template_idx >= 0 && template_idx < max_output_length && 
-                            candidate_idx < input_length) {
+                // WSOLA: Find best matching position
+                for (int offset = -search_range; offset <= search_range; offset++) {
+                    int candidate_pos = input_pos + offset;
+                    
+                    if (candidate_pos < 0 || candidate_pos + overlap_size >= input_length) {
+                        continue;
+                    }
+                    
+                    // Calculate correlation with overlap buffer
+                    float correlation = 0.0f;
+                    float overlap_energy = 0.0f;
+                    float candidate_energy = 0.0f;
+                    
+                    for (int i = 0; i < overlap_size; i++) {
+                        for (int ch = 0; ch < num_channels; ch++) {
+                            int buf_idx = i * num_channels + ch;
+                            int cand_idx = candidate_pos + i * num_channels + ch;
                             
-                            float template_sample = (float)output[template_idx * num_channels + ch];
-                            float candidate_sample = (float)input[candidate_idx];
-                            
-                            // 应用窗函数进行加权
-                            float weight = analysis_window[i];
-                            template_sample *= weight;
-                            candidate_sample *= weight;
-                            
-                            correlation += template_sample * candidate_sample;
-                            template_energy += template_sample * template_sample;
-                            candidate_energy += candidate_sample * candidate_sample;
+                            if (buf_idx < overlap_valid_samples && cand_idx < input_length) {
+                                float overlap_sample = overlap_buffer[buf_idx];
+                                float candidate_sample = (float)input[cand_idx];
+                                
+                                correlation += overlap_sample * candidate_sample;
+                                overlap_energy += overlap_sample * overlap_sample;
+                                candidate_energy += candidate_sample * candidate_sample;
+                            }
                         }
                     }
-                }
-                
-                // 归一化相关性 (避免除零)
-                if (template_energy > 0.0f && candidate_energy > 0.0f) {
-                    float normalized_correlation = correlation / sqrtf(template_energy * candidate_energy);
                     
-                    if (normalized_correlation > max_correlation) {
-                        max_correlation = normalized_correlation;
-                        best_match_pos = candidate_pos;
+                    if (overlap_energy > 0.0f && candidate_energy > 0.0f) {
+                        float norm_corr = correlation / sqrtf(overlap_energy * candidate_energy);
+                        if (norm_corr > max_correlation) {
+                            max_correlation = norm_corr;
+                            best_match_pos = candidate_pos;
+                        }
                     }
                 }
             }
             
-            // 使用最佳匹配位置进行overlap-add合成
-            for (int i = 0; i < frame_size; i++) {
+            // Copy frame to output with overlap-add
+            for (int i = 0; i < synthesis_hop; i++) {
                 for (int ch = 0; ch < num_channels; ch++) {
                     int in_idx = best_match_pos + i * num_channels + ch;
                     int out_idx = output_pos + i * num_channels + ch;
                     
                     if (in_idx < input_length && out_idx < max_output_length) {
-                        float new_sample = (float)input[in_idx] * synthesis_window[i];
+                        float sample = (float)input[in_idx];
                         
-                        if (i < overlap_size && output_pos > 0) {
-                            // 重叠区域：使用线性插值进行平滑过渡
-                            float overlap_weight = (float)i / overlap_size;
-                            float existing_sample = (float)output[out_idx];
-                            
-                            // WSOLA重叠合成：加权组合
-                            output[out_idx] = (short)(existing_sample * (1.0f - overlap_weight) + 
-                                                    new_sample * overlap_weight);
-                        } else {
-                            // 非重叠区域：直接使用新样本
-                            output[out_idx] = (short)new_sample;
+                        // Apply overlap-add only in overlap region
+                        if (i < overlap_size && !first_frame && overlap_valid_samples > 0) {
+                            int buf_idx = i * num_channels + ch;
+                            if (buf_idx < overlap_valid_samples) {
+                                // Crossfade between overlap buffer and new sample
+                                sample = overlap_buffer[buf_idx] * fade_out[i] + sample * fade_in[i];
+                            }
                         }
                         
-                        // 防止溢出
-                        if (output[out_idx] > 32767) output[out_idx] = 32767;
-                        if (output[out_idx] < -32768) output[out_idx] = -32768;
+                        // Clamp and output
+                        if (sample > 32767.0f) sample = 32767.0f;
+                        if (sample < -32768.0f) sample = -32768.0f;
+                        output[out_idx] = (short)sample;
                     }
                 }
             }
             
-            // 更新位置
-            output_pos += synthesis_hop;
+            // Save the end of current frame for next overlap
+            overlap_valid_samples = 0;
+            for (int i = 0; i < overlap_size; i++) {
+                for (int ch = 0; ch < num_channels; ch++) {
+                    int in_idx = best_match_pos + (synthesis_hop - overlap_size + i) * num_channels + ch;
+                    if (in_idx < input_length) {
+                        overlap_buffer[overlap_valid_samples++] = (float)input[in_idx];
+                    }
+                }
+            }
             
-            // 固定输入步长以保持恒定速度
-            // 对于0.5x，输入步长应该是输出步长的一半
-            int analysis_hop = synthesis_hop / 2; // 128 samples for consistent 0.5x speed
+            first_frame = false;
+            output_pos += synthesis_hop;
             input_pos += analysis_hop;
         }
         
