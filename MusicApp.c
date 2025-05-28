@@ -74,6 +74,77 @@ static int delay_index_right = 0;
 // 时间拉伸插值的前一个样本存储
 static short interpolation_prev_samples[2] = {0, 0};
 
+// Phase Vocoder 相关结构和函数
+typedef struct {
+    float real;
+    float imag;
+} Complex;
+
+// 简化的FFT实现 (Cooley-Tukey algorithm)
+void fft(Complex* x, int N) {
+    if (N <= 1) return;
+    
+    // 分治递归
+    Complex* even = (Complex*)malloc(N/2 * sizeof(Complex));
+    Complex* odd = (Complex*)malloc(N/2 * sizeof(Complex));
+    
+    for (int i = 0; i < N/2; i++) {
+        even[i] = x[2*i];
+        odd[i] = x[2*i + 1];
+    }
+    
+    fft(even, N/2);
+    fft(odd, N/2);
+    
+    for (int k = 0; k < N/2; k++) {
+        float angle = -2.0f * M_PI * k / N;
+        Complex t = {cosf(angle) * odd[k].real - sinf(angle) * odd[k].imag,
+                     cosf(angle) * odd[k].imag + sinf(angle) * odd[k].real};
+        
+        x[k].real = even[k].real + t.real;
+        x[k].imag = even[k].imag + t.imag;
+        x[k + N/2].real = even[k].real - t.real;
+        x[k + N/2].imag = even[k].imag - t.imag;
+    }
+    
+    free(even);
+    free(odd);
+}
+
+// 逆FFT
+void ifft(Complex* x, int N) {
+    // 共轭
+    for (int i = 0; i < N; i++) {
+        x[i].imag = -x[i].imag;
+    }
+    
+    fft(x, N);
+    
+    // 共轭并缩放
+    for (int i = 0; i < N; i++) {
+        x[i].real /= N;
+        x[i].imag = -x[i].imag / N;
+    }
+}
+
+// 计算复数的幅度
+float complex_magnitude(Complex c) {
+    return sqrtf(c.real * c.real + c.imag * c.imag);
+}
+
+// 计算复数的相位
+float complex_phase(Complex c) {
+    return atan2f(c.imag, c.real);
+}
+
+// 从幅度和相位构造复数
+Complex complex_from_polar(float magnitude, float phase) {
+    Complex result;
+    result.real = magnitude * cosf(phase);
+    result.imag = magnitude * sinf(phase);
+    return result;
+}
+
 // 时间拉伸缓冲区
 static short stretch_buffer[STRETCH_FRAME_SIZE * 2] = {0};
 static short overlap_buffer[STRETCH_OVERLAP_SIZE] = {0};
@@ -427,11 +498,13 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     static float hanning_window[STRETCH_FRAME_SIZE];
     static bool window_initialized = false;
     static bool window_init_0_5x = false;
+    static bool phase_vocoder_init = false;
     
     // 重置静态变量（文件切换时）
     if (need_reset_static_vars) {
         window_initialized = false;
         window_init_0_5x = false;
+        phase_vocoder_init = false;
         need_reset_static_vars = false;
     }
     
@@ -451,6 +524,135 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
+        // Phase Vocoder implementation for highest quality
+        int fft_size = 1024;  // Must be power of 2
+        int hop_analysis = 256;  // Input hop size
+        int hop_synthesis = 512; // Output hop size (2x for 0.5x speed)
+        
+        static float prev_phase[512] = {0}; // Store previous phases
+        
+        // Reset phase tracking on file change
+        if (!phase_vocoder_init) {
+            memset(prev_phase, 0, sizeof(prev_phase));
+            phase_vocoder_init = true;
+        }
+        
+        int input_pos = 0;
+        int output_pos = 0;
+        
+        // Create analysis and synthesis windows
+        static float window[1024];
+        if (!window_init_0_5x) {
+            for (int i = 0; i < fft_size; i++) {
+                window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (fft_size - 1)));
+            }
+            window_init_0_5x = true;
+        }
+        
+        // Allocate FFT buffers
+        Complex* fft_buffer = (Complex*)malloc(fft_size * sizeof(Complex));
+        float* magnitude = (float*)malloc(fft_size/2 * sizeof(float));
+        float* phase = (float*)malloc(fft_size/2 * sizeof(float));
+        
+        while (input_pos + fft_size < input_length && output_pos + fft_size < max_output_length) {
+            // === ANALYSIS STAGE ===
+            // Copy input to FFT buffer with windowing
+            for (int i = 0; i < fft_size; i++) {
+                int sample_idx = input_pos + i * num_channels; // Use first channel only
+                if (sample_idx < input_length) {
+                    fft_buffer[i].real = input[sample_idx] * window[i];
+                    fft_buffer[i].imag = 0.0f;
+                } else {
+                    fft_buffer[i].real = 0.0f;
+                    fft_buffer[i].imag = 0.0f;
+                }
+            }
+            
+            // Forward FFT
+            fft(fft_buffer, fft_size);
+            
+            // Extract magnitude and phase
+            for (int k = 0; k < fft_size/2; k++) {
+                magnitude[k] = complex_magnitude(fft_buffer[k]);
+                phase[k] = complex_phase(fft_buffer[k]);
+            }
+            
+            // === SYNTHESIS STAGE ===
+            // Phase unwrapping and interpolation for time-stretching
+            float time_stretch_ratio = (float)hop_synthesis / hop_analysis;
+            
+            for (int k = 0; k < fft_size/2; k++) {
+                if (output_pos > 0) { // Skip first frame
+                    // Calculate expected phase increment
+                    float expected_phase_inc = 2.0f * M_PI * k * hop_analysis / fft_size;
+                    
+                    // Calculate actual phase difference
+                    float phase_diff = phase[k] - prev_phase[k];
+                    
+                    // Phase unwrapping
+                    while (phase_diff > M_PI) phase_diff -= 2.0f * M_PI;
+                    while (phase_diff < -M_PI) phase_diff += 2.0f * M_PI;
+                    
+                    // Calculate instantaneous frequency
+                    float inst_freq = expected_phase_inc + phase_diff;
+                    
+                    // Modify phase for time-stretching
+                    prev_phase[k] += inst_freq * time_stretch_ratio;
+                    
+                    // Use modified phase
+                    phase[k] = prev_phase[k];
+                } else {
+                    prev_phase[k] = phase[k];
+                }
+                
+                // Reconstruct complex spectrum
+                fft_buffer[k] = complex_from_polar(magnitude[k], phase[k]);
+                // Mirror for negative frequencies
+                if (k > 0 && k < fft_size/2) {
+                    fft_buffer[fft_size - k].real = fft_buffer[k].real;
+                    fft_buffer[fft_size - k].imag = -fft_buffer[k].imag;
+                }
+            }
+            
+            // Inverse FFT
+            ifft(fft_buffer, fft_size);
+            
+            // Overlap-add to output with windowing
+            for (int i = 0; i < fft_size; i++) {
+                for (int ch = 0; ch < num_channels; ch++) {
+                    int out_idx = output_pos + i * num_channels + ch;
+                    if (out_idx < max_output_length) {
+                        float sample = fft_buffer[i].real * window[i];
+                        
+                        if (ch == 0) {
+                            // Process first channel with phase vocoder
+                            output[out_idx] += (short)(sample * 0.5f); // Scale down for overlap-add
+                        } else {
+                            // Copy first channel to other channels (simple stereo handling)
+                            int first_ch_idx = output_pos + i * num_channels;
+                            if (first_ch_idx < max_output_length) {
+                                output[out_idx] = output[first_ch_idx];
+                            }
+                        }
+                        
+                        // Prevent overflow
+                        if (output[out_idx] > 32767) output[out_idx] = 32767;
+                        if (output[out_idx] < -32768) output[out_idx] = -32768;
+                    }
+                }
+            }
+            
+            input_pos += hop_analysis;
+            output_pos += hop_synthesis;
+        }
+        
+        free(fft_buffer);
+        free(magnitude);
+        free(phase);
+        
+        *output_length = output_pos;
+        return;
+    } else if (false) { // Disabled WSOLA for now
         // 0.5x 使用完整的WSOLA算法 (Waveform Similarity Overlap-Add)
         int frame_size = 512;
         int synthesis_hop = 256;     // 输出步长 (2x for 0.5x speed)
