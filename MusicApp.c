@@ -524,33 +524,14 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // Simple, robust 0.5x time-stretching using linear interpolation
-        int input_idx = 0;
-        int output_idx = 0;
-        
-        // For 0.5x speed, each input sample should be output twice (with interpolation)
-        while (input_idx < input_length - num_channels && output_idx < max_output_length - num_channels * 2) {
-            // Copy current sample to output
-            for (int ch = 0; ch < num_channels; ch++) {
-                output[output_idx + ch] = input[input_idx + ch];
-            }
-            output_idx += num_channels;
-            
-            // Add interpolated sample between current and next
-            if (input_idx + num_channels < input_length && output_idx < max_output_length - num_channels) {
-                for (int ch = 0; ch < num_channels; ch++) {
-                    int current = input[input_idx + ch];
-                    int next = input[input_idx + num_channels + ch];
-                    int interpolated = (current + next) / 2;
-                    output[output_idx + ch] = (short)interpolated;
-                }
-                output_idx += num_channels;
-            }
-            
-            input_idx += num_channels;
+        // Ultra-simple 0.5x: just duplicate each sample
+        int samples_to_process = input_length / 2; // Only process half to fit in output buffer
+        for (int i = 0; i < samples_to_process; i++) {
+            // Copy each sample twice
+            output[i * 2] = input[i];
+            output[i * 2 + 1] = input[i];
         }
-        
-        *output_length = output_idx;
+        *output_length = samples_to_process * 2;
         return;
     } else if (false) { // Disabled WSOLA for now
         // 0.5x 使用完整的WSOLA算法 (Waveform Similarity Overlap-Add)
