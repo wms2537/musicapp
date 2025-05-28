@@ -509,8 +509,9 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     int output_pos = 0;
     
     if (speed_factor == 0.5f) {
-        // For 0.5x: use overlap-add to smoothly extend each grain
-        int hop_size = grain_size / 2;  // Output advance per grain (creates 2x duration)
+        // For 0.5x: advance input slowly, output normally (to create longer output)
+        int input_hop = grain_size / 2;   // Read half-grain steps from input
+        int output_hop = grain_size;      // Write full grains to output
         
         // Simple Hanning window for smooth transitions
         static float fade_window[256];
@@ -522,7 +523,7 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
             fade_init = true;
         }
         
-        while (input_pos + grain_size <= input_length && output_pos + hop_size <= max_output_length) {
+        while (input_pos + grain_size <= input_length && output_pos + output_hop <= max_output_length) {
             // Apply grain with window and overlap-add
             for (int i = 0; i < grain_size; i++) {
                 for (int ch = 0; ch < num_channels; ch++) {
@@ -542,9 +543,9 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
                 }
             }
             
-            // For 0.5x speed: advance input by grain_size, output by hop_size (half)
-            input_pos += grain_size * num_channels;
-            output_pos += hop_size * num_channels;
+            // For 0.5x speed: advance input by half-grain, output by full grain
+            input_pos += input_hop * num_channels;
+            output_pos += output_hop * num_channels;
         }
     } else if (speed_factor == 1.5f) {
         // For 1.5x: copy 2 grains out of every 3
