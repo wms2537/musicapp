@@ -524,45 +524,12 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // Simple 0.5x with linear interpolation to avoid repetition
-        int output_samples = 0;
-        
-        for (int i = 0; i < input_length - num_channels && output_samples < max_output_length - num_channels * 2; i += num_channels) {
-            // Copy original sample
-            for (int ch = 0; ch < num_channels; ch++) {
-                output[output_samples + ch] = input[i + ch];
-            }
-            output_samples += num_channels;
-            
-            // Add interpolated sample (average of current and next)
-            if (i + num_channels < input_length && output_samples < max_output_length - num_channels) {
-                for (int ch = 0; ch < num_channels; ch++) {
-                    int current = (int)input[i + ch];
-                    int next = (int)input[i + num_channels + ch];
-                    int interpolated = (current + next) / 2;
-                    
-                    // Clamp to prevent overflow
-                    if (interpolated > 32767) interpolated = 32767;
-                    if (interpolated < -32768) interpolated = -32768;
-                    
-                    output[output_samples + ch] = (short)interpolated;
-                }
-                output_samples += num_channels;
-            }
-        }
-        
-        *output_length = output_samples;
-        return;
-    } else if (false) { // Disabled WSOLA for now
-        // 0.5x 使用完整的WSOLA算法 (Waveform Similarity Overlap-Add)
+        // Use WSOLA for 0.5x speed
         int frame_size = 512;
         int synthesis_hop = 256;     // 输出步长 (2x for 0.5x speed)
         int overlap_size = 128;      // 重叠区域大小
         int template_size = 64;      // 模板匹配大小
         int search_range = 64;       // 搜索范围
-        
-        int output_pos = 0;
-        int input_pos = 0;
         
         // 创建分析窗和合成窗
         static float analysis_window[512];
@@ -667,15 +634,6 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
             // 对于0.5x，输入步长应该是输出步长的一半
             int analysis_hop = synthesis_hop / 2; // 128 samples for consistent 0.5x speed
             input_pos += analysis_hop;
-            
-            // 可选的微调：如果找到了很好的匹配，稍微调整位置
-            if (max_correlation > 0.8f) {
-                int match_offset = best_match_pos - (input_pos - analysis_hop);
-                // 限制调整幅度，避免破坏时间一致性
-                if (match_offset > -16 && match_offset < 16) {
-                    input_pos += match_offset / 4; // 轻微调整
-                }
-            }
         }
         
         *output_length = output_pos;
