@@ -1177,6 +1177,7 @@ restart_playback:
         printf("DEBUG: About to close file\n");
         fflush(stdout);
         fclose(fp);
+        fp = NULL; // Set to NULL after closing to prevent double close
         printf("DEBUG: File closed, opening new file: %s\n", playlist[current_track]);
         fflush(stdout);
         if (open_music_file(playlist[current_track])) {
