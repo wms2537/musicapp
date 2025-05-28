@@ -525,11 +525,11 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     
     if (speed_factor == 0.5f) {
         // Phase Vocoder implementation for highest quality
-        int fft_size = 1024;  // Must be power of 2
-        int hop_analysis = 256;  // Input hop size
-        int hop_synthesis = 512; // Output hop size (2x for 0.5x speed)
+        int fft_size = 512;   // Smaller FFT for better real-time performance
+        int hop_analysis = 128;  // Input hop size  
+        int hop_synthesis = 256; // Output hop size (2x for 0.5x speed)
         
-        static float prev_phase[513] = {0}; // Store previous phases (fft_size/2 + 1)
+        static float prev_phase[257] = {0}; // Store previous phases (fft_size/2 + 1)
         
         // Reset phase tracking on file change
         if (!phase_vocoder_init) {
@@ -541,7 +541,7 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
         int output_pos = 0;
         
         // Create analysis and synthesis windows
-        static float window[1024];
+        static float window[512];
         if (!window_init_0_5x) {
             for (int i = 0; i < fft_size; i++) {
                 window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (fft_size - 1)));
@@ -556,9 +556,9 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
         
         while (input_pos + fft_size < input_length && output_pos + fft_size < max_output_length) {
             // === ANALYSIS STAGE ===
-            // Copy input to FFT buffer with windowing
+            // Copy input to FFT buffer with windowing (use first channel only)
             for (int i = 0; i < fft_size; i++) {
-                int sample_idx = input_pos + i * num_channels; // Use first channel only
+                int sample_idx = input_pos + i * num_channels;
                 if (sample_idx < input_length) {
                     fft_buffer[i].real = input[sample_idx] * window[i];
                     fft_buffer[i].imag = 0.0f;
@@ -628,29 +628,26 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
             // Inverse FFT
             ifft(fft_buffer, fft_size);
             
-            // Proper overlap-add synthesis with window normalization
+            // Overlap-add synthesis with proper scaling
             for (int i = 0; i < fft_size; i++) {
-                int out_idx = output_pos + i * num_channels;
-                if (out_idx + num_channels <= max_output_length) {
-                    // Apply synthesis window and normalize for overlap-add
-                    float windowed_sample = fft_buffer[i].real * window[i];
-                    
-                    // Normalize by expected window overlap
-                    // For 50% overlap with Hanning window, normalization factor ≈ 1.5
-                    windowed_sample *= 1.5f;
-                    
-                    // Apply to all channels
-                    for (int ch = 0; ch < num_channels; ch++) {
-                        int sample_idx = out_idx + ch;
+                for (int ch = 0; ch < num_channels; ch++) {
+                    int out_idx = output_pos + i * num_channels + ch;
+                    if (out_idx < max_output_length) {
+                        // Apply synthesis window 
+                        float windowed_sample = fft_buffer[i].real * window[i];
                         
-                        // Overlap-add accumulation
-                        float accumulated = (float)output[sample_idx] + windowed_sample;
+                        // Scale for overlap-add (Hanning window with 50% overlap needs ~2/3 scaling)
+                        windowed_sample *= 0.67f;
+                        
+                        // Accumulate with existing samples (overlap-add)
+                        float existing = (float)output[out_idx];
+                        float new_sample = existing + windowed_sample;
                         
                         // Clamp to prevent overflow
-                        if (accumulated > 32767.0f) accumulated = 32767.0f;
-                        if (accumulated < -32768.0f) accumulated = -32768.0f;
+                        if (new_sample > 32767.0f) new_sample = 32767.0f;
+                        if (new_sample < -32768.0f) new_sample = -32768.0f;
                         
-                        output[sample_idx] = (short)accumulated;
+                        output[out_idx] = (short)new_sample;
                     }
                 }
             }
