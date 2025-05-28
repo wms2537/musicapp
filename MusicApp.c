@@ -574,58 +574,70 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
         *output_length = output_pos;
         return;
     } else {
-        // For 1.5x and 2.0x speeds - simple frame skipping approach
+        // For 1.5x and 2.0x speeds - pitch-preserving time stretch
         int sample_rate = wav_header.sample_rate;
         
         // Debug output for other speeds
         static bool debug_printed_other = false;
         if (!debug_printed_other || need_reset_static_vars) {
-            printf("[%.1fx Speed] Using frame skipping\n", speed_factor);
-            printf("[%.1fx Speed] Frame size: %d, Input advance: %.1f\n", 
-                   speed_factor, 256, 256.0f * speed_factor);
+            printf("[%.1fx Pitch-Preserving] Sample Rate: %d Hz, Channels: %d\n", 
+                   speed_factor, sample_rate, num_channels);
             debug_printed_other = true;
         }
         
-        // Simple approach: skip input frames based on speed
-        int frame_size = 256;  // Small frames to reduce artifacts
-        float input_advance = frame_size * speed_factor;
-        int output_advance = frame_size;
+        // WSOLA parameters for pitch preservation
+        int window_size = 512;  // Fixed window size for simplicity
+        int synthesis_hop = window_size / 4;  // Fixed output hop (25% overlap)
+        int analysis_hop = (int)(synthesis_hop / speed_factor);  // Input hop for time stretch
         
-        // Crossfade parameters
-        int fade_size = frame_size / 8;  // 12.5% crossfade
+        if (analysis_hop <= 0) analysis_hop = 1;
         
-        float input_pos_float = 0.0f;
+        printf("[%.1fx] Window: %d, Analysis hop: %d, Synthesis hop: %d\n", 
+               speed_factor, window_size, analysis_hop, synthesis_hop);
+        
+        // Create Hanning window
+        static float window[512];
+        static bool window_initialized = false;
+        if (!window_initialized || need_reset_static_vars) {
+            for (int i = 0; i < window_size; i++) {
+                window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (window_size - 1)));
+            }
+            window_initialized = true;
+        }
+        
+        // Simple WSOLA without correlation (for continuous signals like sine waves)
+        int input_pos = 0;
         int output_pos = 0;
         
-        while ((int)input_pos_float + frame_size <= input_length && 
-               output_pos + frame_size <= max_output_length) {
+        while (input_pos + window_size <= input_length && 
+               output_pos + synthesis_hop <= max_output_length) {
             
-            int input_pos = (int)input_pos_float;
-            
-            // Copy frame with crossfade at boundaries
-            for (int i = 0; i < frame_size; i++) {
-                float fade = 1.0f;
-                
-                // Apply crossfade at frame boundaries
-                if (i < fade_size) {
-                    fade = (float)i / fade_size;
-                } else if (i >= frame_size - fade_size) {
-                    fade = (float)(frame_size - i) / fade_size;
-                }
-                
+            // Apply windowed samples to output with proper scaling
+            for (int i = 0; i < window_size; i++) {
                 for (int ch = 0; ch < num_channels; ch++) {
                     int in_idx = input_pos + i * num_channels + ch;
                     int out_idx = output_pos + i * num_channels + ch;
                     
                     if (in_idx < input_length && out_idx < max_output_length) {
-                        // Simple copy with fade (no overlap-add to avoid interference)
-                        output[out_idx] = (short)(input[in_idx] * fade);
+                        // Apply window and scale for overlap-add
+                        float sample = input[in_idx] * window[i];
+                        
+                        // Use simple addition instead of +=, with proper normalization
+                        if (i < synthesis_hop || output_pos == 0) {
+                            // First part of window or first frame
+                            output[out_idx] = (short)(sample);
+                        } else {
+                            // Overlap region - blend with existing
+                            float existing = output[out_idx];
+                            float overlap_factor = (float)(i - synthesis_hop) / (window_size - synthesis_hop);
+                            output[out_idx] = (short)(existing * (1.0f - overlap_factor) + sample * overlap_factor);
+                        }
                     }
                 }
             }
             
-            input_pos_float += input_advance;
-            output_pos += output_advance;
+            input_pos += analysis_hop;
+            output_pos += synthesis_hop;
         }
         
         *output_length = output_pos;
