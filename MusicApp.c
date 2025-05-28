@@ -524,14 +524,29 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // Ultra-simple 0.5x: just duplicate each sample
-        int samples_to_process = input_length / 2; // Only process half to fit in output buffer
-        for (int i = 0; i < samples_to_process; i++) {
-            // Copy each sample twice
-            output[i * 2] = input[i];
-            output[i * 2 + 1] = input[i];
+        // Simple 0.5x with linear interpolation to avoid repetition
+        int output_samples = 0;
+        
+        for (int i = 0; i < input_length - num_channels && output_samples < max_output_length - num_channels * 2; i += num_channels) {
+            // Copy original sample
+            for (int ch = 0; ch < num_channels; ch++) {
+                output[output_samples + ch] = input[i + ch];
+            }
+            output_samples += num_channels;
+            
+            // Add interpolated sample (average of current and next)
+            if (i + num_channels < input_length && output_samples < max_output_length - num_channels) {
+                for (int ch = 0; ch < num_channels; ch++) {
+                    short current = input[i + ch];
+                    short next = input[i + num_channels + ch];
+                    short interpolated = (short)((int)current + (int)next) / 2;
+                    output[output_samples + ch] = interpolated;
+                }
+                output_samples += num_channels;
+            }
         }
-        *output_length = samples_to_process * 2;
+        
+        *output_length = output_samples;
         return;
     } else if (false) { // Disabled WSOLA for now
         // 0.5x 使用完整的WSOLA算法 (Waveform Similarity Overlap-Add)
