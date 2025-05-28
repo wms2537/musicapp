@@ -514,12 +514,14 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
         int output_hop = grain_size / 2;  // Normal overlap in output (128 samples)
         // Ratio: 64/128 = 0.5 → creates 2x longer output = 0.5x speed
         
-        // Simple Hanning window for smooth transitions
+        // Use square-root Hanning for perfect reconstruction with 50% overlap
         static float fade_window[256];
         static bool fade_init = false;
         if (!fade_init || need_reset_static_vars) {
             for (int i = 0; i < grain_size; i++) {
-                fade_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (grain_size - 1)));
+                // Square root of Hanning window for perfect reconstruction
+                float hann = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (grain_size - 1)));
+                fade_window[i] = sqrtf(hann);
             }
             fade_init = true;
             printf("[0.5x] Input hop: %d, Output hop: %d, Grain size: %d\n", 
@@ -536,8 +538,8 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
                     if (in_idx < input_length && out_idx < max_output_length) {
                         float windowed_sample = input[in_idx] * fade_window[i];
                         
-                        // Add to output (overlap-add)
-                        output[out_idx] += (short)(windowed_sample * 0.5f);
+                        // Add to output (overlap-add) - no scaling needed with sqrt window
+                        output[out_idx] += (short)windowed_sample;
                         
                         // Prevent overflow
                         if (output[out_idx] > 32767) output[out_idx] = 32767;
