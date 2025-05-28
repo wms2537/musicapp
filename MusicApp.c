@@ -527,154 +527,112 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // Two-stage approach for pitch preservation:
-        // Stage 1: Time stretch to 2x length (using SOLA)
-        // Stage 2: Resample by 2x to restore pitch
-        
+        // Simple granular synthesis for 0.5x speed
         int sample_rate = wav_header.sample_rate;
         
         // Debug output
         static bool debug_printed_simple = false;
         if (!debug_printed_simple || need_reset_static_vars) {
-            printf("[0.5x Pitch-Preserving] Sample Rate: %d Hz, Channels: %d\n", sample_rate, num_channels);
-            printf("[0.5x Pitch-Preserving] Using time stretch + resampling\n");
+            printf("[0.5x Granular] Sample Rate: %d Hz, Channels: %d\n", sample_rate, num_channels);
+            printf("[0.5x Granular] Grain size: %d samples\n", 1024);
             debug_printed_simple = true;
         }
         
-        // State preservation for streaming
-        static short overlap_buffer[4096] = {0};
-        static int overlap_size = 0;
-        static bool first_buffer = true;
+        // Granular synthesis parameters
+        int grain_size = 1024;  // Fixed grain size
+        int grain_hop = grain_size / 2;  // 50% overlap between grains
         
-        if (need_reset_static_vars) {
-            overlap_size = 0;
-            first_buffer = true;
-            for (int i = 0; i < 4096; i++) overlap_buffer[i] = 0;
-        }
+        // For 0.5x speed: repeat each grain once
+        int output_pos = 0;
         
-        // Allocate intermediate buffer for stretched audio
-        static short stretch_buffer[AUDIO_BUFFER_SIZE * 4];
-        int stretch_length = 0;
-        
-        // Stage 1: SOLA time stretching (2x length, no pitch change)
-        // Parameters based on sample rate
-        int window_ms = 20;  // 20ms windows
-        int window_size = (sample_rate * window_ms) / 1000;
-        if (window_size > 2048) window_size = 2048;
-        if (window_size < 256) window_size = 256;  // Minimum size
-        
-        int analysis_hop = window_size / 4;   // 75% overlap
-        int synthesis_hop = analysis_hop * 2; // 2x stretch
-        
-        if (debug_printed_simple && need_reset_static_vars) {
-            printf("[0.5x] Window size: %d samples (%.1f ms)\n", 
-                   window_size, (float)window_size * 1000.0f / sample_rate);
-            printf("[0.5x] Analysis hop: %d, Synthesis hop: %d\n", 
-                   analysis_hop, synthesis_hop);
-        }
-        
-        // Create Hanning window
-        static float window[2048];
-        static int last_window_size = 0;
-        if (last_window_size != window_size) {
-            for (int i = 0; i < window_size; i++) {
-                window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (window_size - 1)));
-            }
-            last_window_size = window_size;
-        }
-        
-        // Clear stretch buffer
-        for (int i = 0; i < AUDIO_BUFFER_SIZE * 4; i++) {
-            stretch_buffer[i] = 0;
-        }
-        
-        // SOLA processing
-        int input_pos = 0;
-        int stretch_pos = 0;
-        
-        while (input_pos + window_size <= input_length && 
-               stretch_pos + synthesis_hop < AUDIO_BUFFER_SIZE * 4) {
+        for (int input_pos = 0; input_pos + grain_size <= input_length && 
+             output_pos < max_output_length; input_pos += grain_hop) {
             
-            // Apply window and copy to stretch buffer with overlap-add
-            for (int i = 0; i < window_size; i++) {
-                for (int ch = 0; ch < num_channels; ch++) {
-                    int in_idx = input_pos + i * num_channels + ch;
-                    int out_idx = stretch_pos + i * num_channels + ch;
+            // Output the same grain twice for 0.5x speed
+            for (int repeat = 0; repeat < 2; repeat++) {
+                // Simple crossfade between repetitions
+                for (int i = 0; i < grain_size && output_pos < max_output_length; i++) {
+                    float fade = 1.0f;
                     
-                    if (in_idx < input_length && out_idx < AUDIO_BUFFER_SIZE * 4) {
-                        float sample = input[in_idx] * window[i];
-                        stretch_buffer[out_idx] += (short)(sample * 0.5f); // Scale for overlap-add
+                    // Apply fade in/out at grain boundaries
+                    if (i < grain_size / 8) {
+                        fade = (float)i / (grain_size / 8);
+                    } else if (i > 7 * grain_size / 8) {
+                        fade = (float)(grain_size - i) / (grain_size / 8);
+                    }
+                    
+                    for (int ch = 0; ch < num_channels; ch++) {
+                        int in_idx = input_pos + i * num_channels + ch;
+                        if (in_idx < input_length) {
+                            output[output_pos++] = (short)(input[in_idx] * fade);
+                        }
                     }
                 }
             }
-            
-            input_pos += analysis_hop;
-            stretch_pos += synthesis_hop;
         }
         
-        stretch_length = stretch_pos;
-        
-        // For 0.5x speed: Keep the stretched audio (2x length = 0.5x speed)
-        // No resampling needed - the pitch is already preserved by SOLA
-        
-        // Copy stretched buffer to output (with length limit)
-        int copy_length = (stretch_length < max_output_length) ? stretch_length : max_output_length;
-        for (int i = 0; i < copy_length; i++) {
-            output[i] = stretch_buffer[i];
-        }
-        
-        *output_length = copy_length;
+        *output_length = output_pos;
         return;
     } else {
-        // For 1.5x and 2.0x speeds - use consistent SOLA approach
+        // For 1.5x and 2.0x speeds - simple frame skipping approach
         int sample_rate = wav_header.sample_rate;
         
         // Debug output for other speeds
         static bool debug_printed_other = false;
-        if (!debug_printed_other) {
-            printf("[%.1fx Speed] Using SOLA time stretch\n", speed_factor);
+        if (!debug_printed_other || need_reset_static_vars) {
+            printf("[%.1fx Speed] Using frame skipping\n", speed_factor);
+            printf("[%.1fx Speed] Frame size: %d, Input advance: %.1f\n", 
+                   speed_factor, 256, 256.0f * speed_factor);
             debug_printed_other = true;
         }
         
-        // Parameters for other speeds
-        int window_size = 512;  // Fixed window size
-        int analysis_hop = (int)(window_size / 4 * speed_factor);  // Adaptive hop
-        int synthesis_hop = window_size / 4;  // Fixed synthesis hop
+        // Simple approach: skip input frames based on speed
+        int frame_size = 256;  // Small frames to reduce artifacts
+        float input_advance = frame_size * speed_factor;
+        int output_advance = frame_size;
         
-        if (analysis_hop <= 0) analysis_hop = 1;
-        if (synthesis_hop <= 0) synthesis_hop = 1;
+        // Crossfade parameters
+        int fade_size = frame_size / 8;  // 12.5% crossfade
         
-        // Create Hanning window
-        static float hanning_window[512];
-        static bool window_init = false;
-        if (!window_init) {
-            for (int i = 0; i < window_size; i++) {
-                hanning_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (window_size - 1)));
-            }
-            window_init = true;
-        }
+        float input_pos_float = 0.0f;
+        int output_pos = 0;
         
-        // SOLA processing for other speeds
-        while (input_pos + window_size <= input_length && output_pos + synthesis_hop < max_output_length) {
-            // Apply window and copy with overlap-add
-            for (int i = 0; i < window_size; i++) {
+        while ((int)input_pos_float + frame_size <= input_length && 
+               output_pos + frame_size <= max_output_length) {
+            
+            int input_pos = (int)input_pos_float;
+            
+            // Copy frame with crossfade at boundaries
+            for (int i = 0; i < frame_size; i++) {
+                float fade = 1.0f;
+                
+                // Apply crossfade at frame boundaries
+                if (i < fade_size) {
+                    fade = (float)i / fade_size;
+                } else if (i >= frame_size - fade_size) {
+                    fade = (float)(frame_size - i) / fade_size;
+                }
+                
                 for (int ch = 0; ch < num_channels; ch++) {
                     int in_idx = input_pos + i * num_channels + ch;
                     int out_idx = output_pos + i * num_channels + ch;
                     
                     if (in_idx < input_length && out_idx < max_output_length) {
-                        float sample = input[in_idx] * hanning_window[i] * 0.5f;
-                        output[out_idx] += (short)sample;
+                        // Simple copy with fade (no overlap-add to avoid interference)
+                        output[out_idx] = (short)(input[in_idx] * fade);
                     }
                 }
             }
             
-            input_pos += analysis_hop;
-            output_pos += synthesis_hop;
+            input_pos_float += input_advance;
+            output_pos += output_advance;
         }
+        
+        *output_length = output_pos;
     }
     
-    *output_length = output_pos;
+    // Reset the flag after processing
+    need_reset_static_vars = false;
 }
 
 void apply_fir_filter(short* input, short* output, int length, equalizer_mode_t mode) {
