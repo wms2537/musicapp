@@ -1160,28 +1160,62 @@ restart_playback:
     
     // 处理自动切换到下一首
     if (auto_next_requested) {
+        printf("DEBUG: Entering auto_next_requested block\n");
+        fflush(stdout);
         auto_next_requested = false;
+        printf("DEBUG: Set auto_next_requested to false\n");
+        fflush(stdout);
         current_track = (current_track + 1) % playlist_count;
+        printf("DEBUG: Updated current_track to %d\n", current_track);
+        fflush(stdout);
         log_user_operation("AUTO_NEXT_TRACK", "SUCCESS");
+        printf("DEBUG: Logged operation\n");
+        fflush(stdout);
         printf("自动切换到下一首: %s\n", playlist[current_track]);
+        fflush(stdout);
         
+        printf("DEBUG: About to close file\n");
+        fflush(stdout);
         fclose(fp);
+        printf("DEBUG: File closed, opening new file: %s\n", playlist[current_track]);
+        fflush(stdout);
         if (open_music_file(playlist[current_track])) {
+            printf("DEBUG: Successfully opened new file\n");
+            fflush(stdout);
             // 检查新文件的音频参数是否与当前ALSA配置匹配
             if (wav_header.sample_rate != rate) {
                 printf("DEBUG: Auto-switch audio parameters changed, need to reconfigure ALSA\n");
+                fflush(stdout);
                 printf("DEBUG: Old: %u Hz, New: %u Hz\n", rate, wav_header.sample_rate);
+                fflush(stdout);
                 
                 // 重新配置ALSA以匹配新文件
+                printf("DEBUG: About to call snd_pcm_drop\n");
+                fflush(stdout);
                 snd_pcm_drop(pcm_handle);
+                printf("DEBUG: snd_pcm_drop completed\n");
+                fflush(stdout);
                 
                 // Free existing hw_params if allocated
+                printf("DEBUG: Checking hw_params: %p\n", hw_params);
+                fflush(stdout);
                 if (hw_params) {
+                    printf("DEBUG: About to free hw_params\n");
+                    fflush(stdout);
                     snd_pcm_hw_params_free(hw_params);
                     hw_params = NULL;
+                    printf("DEBUG: hw_params freed and set to NULL\n");
+                    fflush(stdout);
+                } else {
+                    printf("DEBUG: hw_params is NULL, skipping free\n");
+                    fflush(stdout);
                 }
                 
+                printf("DEBUG: About to allocate new hw_params\n");
+                fflush(stdout);
                 snd_pcm_hw_params_malloc(&hw_params);
+                printf("DEBUG: New hw_params allocated: %p\n", hw_params);
+                fflush(stdout);
                 snd_pcm_hw_params_any(pcm_handle, hw_params);
                 snd_pcm_hw_params_set_access(pcm_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
                 snd_pcm_hw_params_set_format(pcm_handle, hw_params, pcm_format);
