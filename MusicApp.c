@@ -528,8 +528,8 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
         int frame_size = 512;
         int synthesis_hop = 256;     // 输出步长 (2x for 0.5x speed)
         int overlap_size = 128;      // 重叠区域大小
-        int template_size = 64;      // 模板匹配大小
-        int search_range = 64;       // 搜索范围
+        int template_size = 128;      // 模板匹配大小 (Increased from 64)
+        int search_range = 128;       // 搜索范围 (Increased from 64)
         
         // 创建分析窗和合成窗
         static float analysis_window[512];
