@@ -509,25 +509,35 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     int output_pos = 0;
     
     if (speed_factor == 0.5f) {
-        // For 0.5x: very simple overlap-add with no windowing
-        printf("[0.5x] Using simple overlap-add (no windowing)\n");
+        // For 0.5x: overlapping frames to ensure no gaps
+        printf("[0.5x] Using overlapping frames for continuous output\n");
         
-        int frame_size = 128;  // Smaller frames
+        int frame_size = 128;
         int input_hop = frame_size / 2;   // 64 samples input advance
-        int output_hop = frame_size;      // 128 samples output advance
-        // Ratio: 64/128 = 0.5 for true 0.5x speed
+        int output_hop = frame_size / 2;  // 64 samples output advance (creates overlap!)
+        // This creates 2x output length = 0.5x speed
         
-        while (input_pos + frame_size <= input_length && output_pos + output_hop <= max_output_length) {
+        printf("[0.5x] Frame: %d, Input hop: %d, Output hop: %d\n", 
+               frame_size, input_hop, output_hop);
+        
+        while (input_pos + frame_size <= input_length && output_pos + frame_size <= max_output_length) {
             
-            // Simple copy without any windowing
+            // Copy frame with overlap handling
             for (int i = 0; i < frame_size; i++) {
                 for (int ch = 0; ch < num_channels; ch++) {
                     int in_idx = input_pos + i * num_channels + ch;
                     int out_idx = output_pos + i * num_channels + ch;
                     
                     if (in_idx < input_length && out_idx < max_output_length) {
-                        // Simple copy - let the natural overlap handle continuity
-                        output[out_idx] = input[in_idx];
+                        if (output_pos == 0 || i < output_hop) {
+                            // First frame or non-overlap region: direct copy
+                            output[out_idx] = input[in_idx];
+                        } else {
+                            // Overlap region: average with existing
+                            float existing = output[out_idx];
+                            float new_sample = input[in_idx];
+                            output[out_idx] = (short)((existing + new_sample) * 0.5f);
+                        }
                     }
                 }
             }
