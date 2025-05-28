@@ -44,26 +44,29 @@ long data_chunk_offset = 0; // Store the actual position of the data chunk
 bool track_change_requested = false; // Flag for manual track changes
 bool auto_next_requested = false; // Flag for automatic track changes
 
-// FIR滤波器系数 - 正确归一化的滤波器 (sum ≈ 1.0)
+// FIR滤波器系数 - 重新设计的滤波器，具有更明显的频率响应
+// Bass Boost: 低通滤波器 + 增益，强调 < 250Hz
 static double bass_boost_coeffs[FIR_TAP_NUM] = {
-    -0.00360, -0.00360, -0.00360, 0.00000, 0.00719, 0.01439, 0.02158, 0.02878,
-     0.03597,  0.04317,  0.05036, 0.05755, 0.06475, 0.06475, 0.06475, 0.05755,
-     0.05755,  0.06475,  0.06475, 0.06475, 0.05755, 0.05036, 0.04317, 0.03597,
-     0.02878,  0.02158,  0.01439, 0.00719, 0.00000, -0.00360, -0.00360, -0.00360
+    -0.0020, -0.0025, -0.0030, -0.0025, 0.0000, 0.0050, 0.0120, 0.0200,
+     0.0280,  0.0350,  0.0400,  0.0420, 0.0400, 0.0350, 0.0280, 0.0200,
+     0.0200,  0.0280,  0.0350,  0.0400, 0.0420, 0.0400, 0.0350, 0.0280,
+     0.0200,  0.0120,  0.0050,  0.0000, -0.0025, -0.0030, -0.0025, -0.0020
 };
 
+// Treble Boost: 高通滤波器 + 增益，强调 > 4kHz
 static double treble_boost_coeffs[FIR_TAP_NUM] = {
-     0.00658,  0.00329,  0.00000, -0.00658, -0.01645, -0.02632, -0.03289, -0.02632,
-    -0.01316,  0.00658,  0.03289,  0.06579,  0.09868,  0.12500,  0.13816,  0.14474,
-     0.14474,  0.13816,  0.12500,  0.09868,  0.06579,  0.03289,  0.00658, -0.01316,
-    -0.02632, -0.03289, -0.02632, -0.01645, -0.00658,  0.00000,  0.00329,  0.00658
+     0.0100, -0.0150,  0.0200, -0.0250,  0.0300, -0.0350,  0.0400, -0.0450,
+     0.0500, -0.0550,  0.0600, -0.0650,  0.0700, -0.0750,  0.0800,  0.4000,
+     0.4000,  0.0800, -0.0750,  0.0700, -0.0650,  0.0600, -0.0550,  0.0500,
+    -0.0450,  0.0400, -0.0350,  0.0300, -0.0250,  0.0200, -0.0150,  0.0100
 };
 
+// Vocal Enhance: 带通滤波器，强调 300Hz-3kHz (人声频率范围)
 static double vocal_enhance_coeffs[FIR_TAP_NUM] = {
-     0.00336,  0.00336,  0.00671,  0.00671,  0.01007,  0.01342,  0.01678,  0.02013,
-     0.02685,  0.03356,  0.04027,  0.05034,  0.06040,  0.06711,  0.07383,  0.07718,
-     0.07718,  0.07383,  0.06711,  0.06040,  0.05034,  0.04027,  0.03356,  0.02685,
-     0.02013,  0.01678,  0.01342,  0.01007,  0.00671,  0.00671,  0.00336,  0.00336
+    -0.0100, -0.0080, -0.0060, -0.0040, -0.0020,  0.0000,  0.0020,  0.0040,
+     0.0060,  0.0080,  0.0100,  0.0150,  0.0250,  0.0400,  0.0600,  0.0800,
+     0.0800,  0.0600,  0.0400,  0.0250,  0.0150,  0.0100,  0.0080,  0.0060,
+     0.0040,  0.0020,  0.0000, -0.0020, -0.0040, -0.0060, -0.0080, -0.0100
 };
 
 static short delay_buffer_left[FIR_TAP_NUM] = {0};
@@ -524,34 +527,71 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // Fixed WSOLA for 0.5x speed - proper overlap-add without windowing artifacts
-        int frame_size = 512;
-        int analysis_hop = 128;      // Input hop size
-        int synthesis_hop = 256;     // Output hop size (2x analysis for 0.5x speed)
-        int overlap_size = 256;      // 50% overlap for smooth transitions
-        int search_range = 64;       // Search range for best match
+        // Adaptive parameters based on sample rate
+        int sample_rate = wav_header.sample_rate;
+        
+        // For very low sample rates or mono, use simple sample duplication
+        if (sample_rate <= 16000 || num_channels == 1) {
+            // Simple sample duplication for 0.5x speed
+            int out_idx = 0;
+            for (int in_idx = 0; in_idx < input_length && out_idx < max_output_length - 1; in_idx++) {
+                output[out_idx++] = input[in_idx];
+                output[out_idx++] = input[in_idx];
+            }
+            *output_length = out_idx;
+            return;
+        }
+        
+        // Target frame duration: 20-30ms for good quality
+        // Adjust frame size based on sample rate
+        int frame_size = (sample_rate * 20) / 1000;  // 20ms frame
+        // Round to nearest power of 2 for efficiency
+        if (frame_size <= 256) frame_size = 256;
+        else if (frame_size <= 512) frame_size = 512;
+        else if (frame_size <= 1024) frame_size = 1024;
+        else frame_size = 2048;
+        
+        int analysis_hop = frame_size / 4;      // 25% hop for input
+        int synthesis_hop = analysis_hop * 2;   // 2x for 0.5x speed
+        int overlap_size = frame_size / 2;      // 50% overlap
+        int search_range = analysis_hop / 2;    // Search ±50% of hop size
+        
+        // Debug output (only print once)
+        static bool debug_printed = false;
+        if (!debug_printed && need_reset_static_vars) {
+            printf("[0.5x Time Stretch] Sample Rate: %d Hz, Channels: %d\n", sample_rate, num_channels);
+            printf("[0.5x Time Stretch] Frame Size: %d, Analysis Hop: %d, Synthesis Hop: %d\n", 
+                   frame_size, analysis_hop, synthesis_hop);
+            printf("[0.5x Time Stretch] Frame duration: %.1f ms\n", 
+                   (float)frame_size * 1000.0f / sample_rate);
+            debug_printed = true;
+        }
         
         // Static buffers for state preservation between calls
-        static float overlap_buffer[2048] = {0};  // For storing overlap region
+        static float overlap_buffer[4096] = {0};  // Max size for up to 48kHz stereo
         static int overlap_valid_samples = 0;
         static bool first_frame = true;
+        static int last_frame_size = 0;
         
-        // Reset on file change
-        if (need_reset_static_vars) {
-            for (int i = 0; i < 2048; i++) overlap_buffer[i] = 0;
+        // Reset on file change or frame size change
+        if (need_reset_static_vars || last_frame_size != frame_size) {
+            for (int i = 0; i < 4096; i++) overlap_buffer[i] = 0;
             overlap_valid_samples = 0;
             first_frame = true;
+            window_init_0_5x = false;  // Force window recalculation
+            last_frame_size = frame_size;
         }
         
         // Create fade in/out windows for overlap region only
-        static float fade_in[256];
-        static float fade_out[256];
+        static float fade_in[2048];   // Max overlap size
+        static float fade_out[2048];
         
         if (!window_init_0_5x) {
             for (int i = 0; i < overlap_size; i++) {
-                // Linear fade for simplicity and to avoid amplitude modulation
-                fade_in[i] = (float)i / (overlap_size - 1);
-                fade_out[i] = 1.0f - fade_in[i];
+                // Use raised cosine window for smoother transitions
+                float t = (float)i / (overlap_size - 1);
+                fade_in[i] = 0.5f * (1.0f - cosf(M_PI * t));
+                fade_out[i] = 0.5f * (1.0f + cosf(M_PI * t));
             }
             window_init_0_5x = true;
         }
@@ -671,16 +711,22 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
 
 void apply_fir_filter(short* input, short* output, int length, equalizer_mode_t mode) {
     double* coeffs;
+    double gain = 1.0;
+    double mix_ratio = 0.7;  // Mix 70% filtered + 30% original for more natural sound
     
     switch(mode) {
         case EQ_BASS_BOOST:
             coeffs = bass_boost_coeffs;
+            gain = 2.0;  // Boost gain for bass
             break;
         case EQ_TREBLE_BOOST:
             coeffs = treble_boost_coeffs;
+            gain = 1.5;  // Moderate gain for treble
             break;
         case EQ_VOCAL_ENHANCE:
             coeffs = vocal_enhance_coeffs;
+            gain = 1.8;  // Boost vocals
+            mix_ratio = 0.6;  // Less mixing for vocals
             break;
         default:
             // 无滤波，直接复制
@@ -706,11 +752,15 @@ void apply_fir_filter(short* input, short* output, int length, equalizer_mode_t 
             
             delay_index_left = (delay_index_left + 1) % FIR_TAP_NUM;
             
-            // 限制输出范围防止溢出
-            if (filtered_sample > 32767) filtered_sample = 32767;
-            if (filtered_sample < -32768) filtered_sample = -32768;
+            // Apply gain and mix with original
+            filtered_sample *= gain;
+            double mixed_sample = filtered_sample * mix_ratio + input[i] * (1.0 - mix_ratio);
             
-            output[i] = (short)filtered_sample;
+            // 限制输出范围防止溢出
+            if (mixed_sample > 32767) mixed_sample = 32767;
+            if (mixed_sample < -32768) mixed_sample = -32768;
+            
+            output[i] = (short)mixed_sample;
         } else {
             // 立体声处理 - 左右声道分别处理
             if (i % 2 == 0) {
@@ -725,11 +775,15 @@ void apply_fir_filter(short* input, short* output, int length, equalizer_mode_t 
                 
                 delay_index_left = (delay_index_left + 1) % FIR_TAP_NUM;
                 
-                // 限制输出范围防止溢出
-                if (filtered_sample > 32767) filtered_sample = 32767;
-                if (filtered_sample < -32768) filtered_sample = -32768;
+                // Apply gain and mix with original
+                filtered_sample *= gain;
+                double mixed_sample = filtered_sample * mix_ratio + input[i] * (1.0 - mix_ratio);
                 
-                output[i] = (short)filtered_sample;
+                // 限制输出范围防止溢出
+                if (mixed_sample > 32767) mixed_sample = 32767;
+                if (mixed_sample < -32768) mixed_sample = -32768;
+                
+                output[i] = (short)mixed_sample;
             } else {
                 // 右声道
                 delay_buffer_right[delay_index_right] = input[i];
@@ -742,11 +796,15 @@ void apply_fir_filter(short* input, short* output, int length, equalizer_mode_t 
                 
                 delay_index_right = (delay_index_right + 1) % FIR_TAP_NUM;
                 
-                // 限制输出范围防止溢出
-                if (filtered_sample > 32767) filtered_sample = 32767;
-                if (filtered_sample < -32768) filtered_sample = -32768;
+                // Apply gain and mix with original
+                filtered_sample *= gain;
+                double mixed_sample = filtered_sample * mix_ratio + input[i] * (1.0 - mix_ratio);
                 
-                output[i] = (short)filtered_sample;
+                // 限制输出范围防止溢出
+                if (mixed_sample > 32767) mixed_sample = 32767;
+                if (mixed_sample < -32768) mixed_sample = -32768;
+                
+                output[i] = (short)mixed_sample;
             }
         }
     }
