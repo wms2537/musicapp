@@ -1213,14 +1213,20 @@ restart_playback:
     // 清理缓冲区（只在这里执行一次）
     printf("DEBUG: Starting buffer cleanup\n");
     if (filtered_buff) {
-        printf("DEBUG: Freeing filtered_buff\n");
+        printf("DEBUG: Freeing filtered_buff at %p\n", filtered_buff);
         free(filtered_buff);
         filtered_buff = NULL;
+        printf("DEBUG: filtered_buff freed and set to NULL\n");
+    } else {
+        printf("DEBUG: filtered_buff is already NULL\n");
     }
     if (temp_samples) {
-        printf("DEBUG: Freeing temp_samples\n");
+        printf("DEBUG: Freeing temp_samples at %p\n", temp_samples);
         free(temp_samples);
         temp_samples = NULL;
+        printf("DEBUG: temp_samples freed and set to NULL\n");
+    } else {
+        printf("DEBUG: temp_samples is already NULL\n");
     }
     printf("DEBUG: Buffer cleanup completed\n");
 
@@ -1240,12 +1246,20 @@ playback_end:
     snd_pcm_close(pcm_handle);
     if (mixer_handle) { snd_mixer_close(mixer_handle); }
     if (buff) {
+        printf("DEBUG: Freeing buff at %p\n", buff);
         free(buff);
         buff = NULL;
+        printf("DEBUG: buff freed and set to NULL\n");
+    } else {
+        printf("DEBUG: buff is already NULL\n");
     }
     if (pcm_name) {
+        printf("DEBUG: Freeing pcm_name at %p\n", pcm_name);
         free(pcm_name);
         pcm_name = NULL;
+        printf("DEBUG: pcm_name freed and set to NULL\n");
+    } else {
+        printf("DEBUG: pcm_name is already NULL\n");
     }
     
     if (log_file) {
