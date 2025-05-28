@@ -945,6 +945,7 @@ int main(int argc, char *argv[]) {
 
     debug_msg(snd_pcm_hw_params(pcm_handle, hw_params), "加载硬件配置参数到驱动");
     snd_pcm_hw_params_free(hw_params);
+    hw_params = NULL;
 
     if (!init_mixer()) {
         printf("Warning: Failed to initialize mixer. Volume control will not be available.\n");
