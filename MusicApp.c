@@ -509,55 +509,31 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     int output_pos = 0;
     
     if (speed_factor == 0.5f) {
-        // For 0.5x: simple crossfade approach for perfect continuity
-        int crossfade_size = 64;  // Small crossfade region
-        int advance_size = grain_size - crossfade_size;  // How much new content per grain
+        // For 0.5x: very simple overlap-add with no windowing
+        printf("[0.5x] Using simple overlap-add (no windowing)\n");
         
-        printf("[0.5x] Grain: %d, Crossfade: %d, Advance: %d\n", 
-               grain_size, crossfade_size, advance_size);
+        int frame_size = 128;  // Smaller frames
+        int input_hop = frame_size / 2;   // 64 samples input advance
+        int output_hop = frame_size;      // 128 samples output advance
+        // Ratio: 64/128 = 0.5 for true 0.5x speed
         
-        while (input_pos + grain_size <= input_length && output_pos + (grain_size / 2) <= max_output_length) {
+        while (input_pos + frame_size <= input_length && output_pos + output_hop <= max_output_length) {
             
-            // Copy the new part of the grain (no crossfade needed)
-            for (int i = 0; i < advance_size; i++) {
+            // Simple copy without any windowing
+            for (int i = 0; i < frame_size; i++) {
                 for (int ch = 0; ch < num_channels; ch++) {
                     int in_idx = input_pos + i * num_channels + ch;
                     int out_idx = output_pos + i * num_channels + ch;
                     
                     if (in_idx < input_length && out_idx < max_output_length) {
+                        // Simple copy - let the natural overlap handle continuity
                         output[out_idx] = input[in_idx];
                     }
                 }
             }
             
-            // Copy the crossfade region with blending
-            for (int i = 0; i < crossfade_size; i++) {
-                for (int ch = 0; ch < num_channels; ch++) {
-                    int in_idx = input_pos + (advance_size + i) * num_channels + ch;
-                    int out_idx = output_pos + (advance_size + i) * num_channels + ch;
-                    
-                    if (in_idx < input_length && out_idx < max_output_length) {
-                        if (output_pos == 0) {
-                            // First grain - no crossfade needed
-                            output[out_idx] = input[in_idx];
-                        } else {
-                            // Crossfade with existing content
-                            float fade_in = (float)i / (crossfade_size - 1);
-                            float fade_out = 1.0f - fade_in;
-                            
-                            float existing = output[out_idx];
-                            float new_sample = input[in_idx];
-                            
-                            output[out_idx] = (short)(existing * fade_out + new_sample * fade_in);
-                        }
-                    }
-                }
-            }
-            
-            // Advance positions for proper 0.5x speed with pitch preservation
-            input_pos += (grain_size / 4) * num_channels;  // Move input slowly (64 samples)
-            output_pos += (grain_size / 2) * num_channels; // Move output normally (128 samples)
-            // Ratio: 64/128 = 0.5 → creates true 0.5x speed with pitch preservation
+            input_pos += input_hop * num_channels;
+            output_pos += output_hop * num_channels;
         }
     } else if (speed_factor == 1.5f) {
         // For 1.5x: copy 2 grains out of every 3
