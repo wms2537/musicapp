@@ -524,143 +524,33 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // Phase Vocoder implementation for highest quality
-        int fft_size = 512;   // Smaller FFT for better real-time performance
-        int hop_analysis = 128;  // Input hop size  
-        int hop_synthesis = 256; // Output hop size (2x for 0.5x speed)
+        // Simple, robust 0.5x time-stretching using linear interpolation
+        int input_idx = 0;
+        int output_idx = 0;
         
-        static float prev_phase[257] = {0}; // Store previous phases (fft_size/2 + 1)
-        
-        // Reset phase tracking on file change
-        if (!phase_vocoder_init) {
-            memset(prev_phase, 0, sizeof(prev_phase));
-            phase_vocoder_init = true;
-        }
-        
-        int input_pos = 0;
-        int output_pos = 0;
-        
-        // Create analysis and synthesis windows
-        static float window[512];
-        if (!window_init_0_5x) {
-            for (int i = 0; i < fft_size; i++) {
-                window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (fft_size - 1)));
+        // For 0.5x speed, each input sample should be output twice (with interpolation)
+        while (input_idx < input_length - num_channels && output_idx < max_output_length - num_channels * 2) {
+            // Copy current sample to output
+            for (int ch = 0; ch < num_channels; ch++) {
+                output[output_idx + ch] = input[input_idx + ch];
             }
-            window_init_0_5x = true;
-        }
-        
-        // Allocate FFT buffers
-        Complex* fft_buffer = (Complex*)malloc(fft_size * sizeof(Complex));
-        float* magnitude = (float*)malloc(fft_size/2 * sizeof(float));
-        float* phase = (float*)malloc(fft_size/2 * sizeof(float));
-        
-        while (input_pos + fft_size < input_length && output_pos + fft_size < max_output_length) {
-            // === ANALYSIS STAGE ===
-            // Copy input to FFT buffer with windowing (use first channel only)
-            for (int i = 0; i < fft_size; i++) {
-                int sample_idx = input_pos + i * num_channels;
-                if (sample_idx < input_length) {
-                    fft_buffer[i].real = input[sample_idx] * window[i];
-                    fft_buffer[i].imag = 0.0f;
-                } else {
-                    fft_buffer[i].real = 0.0f;
-                    fft_buffer[i].imag = 0.0f;
-                }
-            }
+            output_idx += num_channels;
             
-            // Forward FFT
-            fft(fft_buffer, fft_size);
-            
-            // Extract magnitude and phase
-            for (int k = 0; k < fft_size/2; k++) {
-                magnitude[k] = complex_magnitude(fft_buffer[k]);
-                phase[k] = complex_phase(fft_buffer[k]);
-            }
-            
-            // === SYNTHESIS STAGE ===
-            // Phase unwrapping and interpolation for time-stretching
-            float time_stretch_ratio = (float)hop_synthesis / hop_analysis;
-            
-            for (int k = 0; k < fft_size/2 + 1; k++) {
-                if (output_pos > 0) { // Skip first frame
-                    // Calculate expected phase increment
-                    float expected_phase_inc = 2.0f * M_PI * k * hop_analysis / fft_size;
-                    
-                    // Calculate actual phase difference
-                    float phase_diff = phase[k] - prev_phase[k];
-                    
-                    // Phase unwrapping - handle 2π discontinuities
-                    while (phase_diff > M_PI) phase_diff -= 2.0f * M_PI;
-                    while (phase_diff < -M_PI) phase_diff += 2.0f * M_PI;
-                    
-                    // Calculate instantaneous frequency
-                    float inst_freq = expected_phase_inc + phase_diff;
-                    
-                    // Update accumulated phase for synthesis
-                    prev_phase[k] += inst_freq * time_stretch_ratio;
-                    
-                    // Use modified phase
-                    phase[k] = prev_phase[k];
-                } else {
-                    prev_phase[k] = phase[k];
-                }
-            }
-            
-            // Reconstruct full spectrum with proper symmetry
-            for (int k = 0; k < fft_size; k++) {
-                if (k <= fft_size/2) {
-                    // Positive frequencies (including DC and Nyquist)
-                    fft_buffer[k] = complex_from_polar(magnitude[k], phase[k]);
-                } else {
-                    // Negative frequencies - complex conjugate of positive frequencies
-                    int mirror_k = fft_size - k;
-                    fft_buffer[k].real = fft_buffer[mirror_k].real;
-                    fft_buffer[k].imag = -fft_buffer[mirror_k].imag;
-                }
-            }
-            
-            // Handle DC and Nyquist bins specially (must be real)
-            fft_buffer[0].imag = 0.0f;
-            if (fft_size % 2 == 0) {
-                fft_buffer[fft_size/2].imag = 0.0f;
-            }
-            
-            // Inverse FFT
-            ifft(fft_buffer, fft_size);
-            
-            // Overlap-add synthesis with proper scaling
-            for (int i = 0; i < fft_size; i++) {
+            // Add interpolated sample between current and next
+            if (input_idx + num_channels < input_length && output_idx < max_output_length - num_channels) {
                 for (int ch = 0; ch < num_channels; ch++) {
-                    int out_idx = output_pos + i * num_channels + ch;
-                    if (out_idx < max_output_length) {
-                        // Apply synthesis window 
-                        float windowed_sample = fft_buffer[i].real * window[i];
-                        
-                        // Scale for overlap-add (Hanning window with 50% overlap needs ~2/3 scaling)
-                        windowed_sample *= 0.67f;
-                        
-                        // Accumulate with existing samples (overlap-add)
-                        float existing = (float)output[out_idx];
-                        float new_sample = existing + windowed_sample;
-                        
-                        // Clamp to prevent overflow
-                        if (new_sample > 32767.0f) new_sample = 32767.0f;
-                        if (new_sample < -32768.0f) new_sample = -32768.0f;
-                        
-                        output[out_idx] = (short)new_sample;
-                    }
+                    int current = input[input_idx + ch];
+                    int next = input[input_idx + num_channels + ch];
+                    int interpolated = (current + next) / 2;
+                    output[output_idx + ch] = (short)interpolated;
                 }
+                output_idx += num_channels;
             }
             
-            input_pos += hop_analysis;
-            output_pos += hop_synthesis;
+            input_idx += num_channels;
         }
         
-        free(fft_buffer);
-        free(magnitude);
-        free(phase);
-        
-        *output_length = output_pos;
+        *output_length = output_idx;
         return;
     } else if (false) { // Disabled WSOLA for now
         // 0.5x 使用完整的WSOLA算法 (Waveform Similarity Overlap-Add)
