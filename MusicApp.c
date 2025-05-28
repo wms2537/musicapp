@@ -509,9 +509,10 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     int output_pos = 0;
     
     if (speed_factor == 0.5f) {
-        // For 0.5x: advance input slowly, output normally (to create longer output)
-        int input_hop = grain_size / 2;   // Read half-grain steps from input
-        int output_hop = grain_size;      // Write full grains to output
+        // For 0.5x: create 2x output length with proper time stretching
+        int input_hop = grain_size / 4;   // Advance very slowly through input (64 samples)
+        int output_hop = grain_size / 2;  // Normal overlap in output (128 samples)
+        // Ratio: 64/128 = 0.5 → creates 2x longer output = 0.5x speed
         
         // Simple Hanning window for smooth transitions
         static float fade_window[256];
@@ -521,9 +522,11 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
                 fade_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (grain_size - 1)));
             }
             fade_init = true;
+            printf("[0.5x] Input hop: %d, Output hop: %d, Grain size: %d\n", 
+                   input_hop, output_hop, grain_size);
         }
         
-        while (input_pos + grain_size <= input_length && output_pos + output_hop <= max_output_length) {
+        while (input_pos + grain_size <= input_length && output_pos + grain_size <= max_output_length) {
             // Apply grain with window and overlap-add
             for (int i = 0; i < grain_size; i++) {
                 for (int ch = 0; ch < num_channels; ch++) {
