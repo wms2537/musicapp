@@ -537,10 +537,15 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
             // Add interpolated sample (average of current and next)
             if (i + num_channels < input_length && output_samples < max_output_length - num_channels) {
                 for (int ch = 0; ch < num_channels; ch++) {
-                    short current = input[i + ch];
-                    short next = input[i + num_channels + ch];
-                    short interpolated = (short)((int)current + (int)next) / 2;
-                    output[output_samples + ch] = interpolated;
+                    int current = (int)input[i + ch];
+                    int next = (int)input[i + num_channels + ch];
+                    int interpolated = (current + next) / 2;
+                    
+                    // Clamp to prevent overflow
+                    if (interpolated > 32767) interpolated = 32767;
+                    if (interpolated < -32768) interpolated = -32768;
+                    
+                    output[output_samples + ch] = (short)interpolated;
                 }
                 output_samples += num_channels;
             }
