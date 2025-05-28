@@ -1029,6 +1029,13 @@ restart_playback:
                 
                 // 重新配置ALSA以匹配新文件
                 snd_pcm_drop(pcm_handle);
+                
+                // Free existing hw_params if allocated
+                if (hw_params) {
+                    snd_pcm_hw_params_free(hw_params);
+                    hw_params = NULL;
+                }
+                
                 snd_pcm_hw_params_malloc(&hw_params);
                 snd_pcm_hw_params_any(pcm_handle, hw_params);
                 snd_pcm_hw_params_set_access(pcm_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
@@ -1046,6 +1053,7 @@ restart_playback:
                 
                 snd_pcm_hw_params(pcm_handle, hw_params);
                 snd_pcm_hw_params_free(hw_params);
+                hw_params = NULL;
                 snd_pcm_prepare(pcm_handle);
                 
                 printf("DEBUG: ALSA reconfigured for new audio parameters\n");
@@ -1165,6 +1173,13 @@ restart_playback:
                 
                 // 重新配置ALSA以匹配新文件
                 snd_pcm_drop(pcm_handle);
+                
+                // Free existing hw_params if allocated
+                if (hw_params) {
+                    snd_pcm_hw_params_free(hw_params);
+                    hw_params = NULL;
+                }
+                
                 snd_pcm_hw_params_malloc(&hw_params);
                 snd_pcm_hw_params_any(pcm_handle, hw_params);
                 snd_pcm_hw_params_set_access(pcm_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
@@ -1182,6 +1197,7 @@ restart_playback:
                 
                 snd_pcm_hw_params(pcm_handle, hw_params);
                 snd_pcm_hw_params_free(hw_params);
+                hw_params = NULL;
                 snd_pcm_prepare(pcm_handle);
                 
                 printf("DEBUG: ALSA reconfigured for auto-switch new audio parameters\n");
