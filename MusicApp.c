@@ -614,54 +614,63 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
         
         stretch_length = stretch_pos;
         
-        // Stage 2: Resample stretched audio by 2x (decimate)
-        // Using proper anti-aliasing filter before decimation
+        // For 0.5x speed: Keep the stretched audio (2x length = 0.5x speed)
+        // No resampling needed - the pitch is already preserved by SOLA
         
-        // Simple 4-tap anti-aliasing filter coefficients
-        const float aa_filter[4] = {0.125f, 0.375f, 0.375f, 0.125f};
-        
-        int output_pos = 0;
-        
-        // Process with anti-aliasing filter and decimate by 2
-        for (int i = 0; i < stretch_length - 4 * num_channels && 
-             output_pos < max_output_length; i += 2 * num_channels) {
-            
-            for (int ch = 0; ch < num_channels; ch++) {
-                // Apply anti-aliasing filter
-                float filtered = 0.0f;
-                for (int j = 0; j < 4; j++) {
-                    int idx = i + j * num_channels + ch;
-                    if (idx < stretch_length) {
-                        filtered += stretch_buffer[idx] * aa_filter[j];
-                    }
-                }
-                
-                // Clamp and output
-                if (filtered > 32767.0f) filtered = 32767.0f;
-                if (filtered < -32768.0f) filtered = -32768.0f;
-                output[output_pos++] = (short)filtered;
-            }
+        // Copy stretched buffer to output (with length limit)
+        int copy_length = (stretch_length < max_output_length) ? stretch_length : max_output_length;
+        for (int i = 0; i < copy_length; i++) {
+            output[i] = stretch_buffer[i];
         }
         
-        *output_length = output_pos;
+        *output_length = copy_length;
         return;
     } else {
-        // 1.5x和2.0x的正常处理（保持不变）
-        while (input_pos + frame_size < input_length && output_pos + frame_size < max_output_length) {
-            for (int ch = 0; ch < num_channels; ch++) {
-                for (int i = 0; i < frame_size; i++) {
-                    int sample_idx = input_pos + i * num_channels + ch;
+        // For 1.5x and 2.0x speeds - use consistent SOLA approach
+        int sample_rate = wav_header.sample_rate;
+        
+        // Debug output for other speeds
+        static bool debug_printed_other = false;
+        if (!debug_printed_other) {
+            printf("[%.1fx Speed] Using SOLA time stretch\n", speed_factor);
+            debug_printed_other = true;
+        }
+        
+        // Parameters for other speeds
+        int window_size = 512;  // Fixed window size
+        int analysis_hop = (int)(window_size / 4 * speed_factor);  // Adaptive hop
+        int synthesis_hop = window_size / 4;  // Fixed synthesis hop
+        
+        if (analysis_hop <= 0) analysis_hop = 1;
+        if (synthesis_hop <= 0) synthesis_hop = 1;
+        
+        // Create Hanning window
+        static float hanning_window[512];
+        static bool window_init = false;
+        if (!window_init) {
+            for (int i = 0; i < window_size; i++) {
+                hanning_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (window_size - 1)));
+            }
+            window_init = true;
+        }
+        
+        // SOLA processing for other speeds
+        while (input_pos + window_size <= input_length && output_pos + synthesis_hop < max_output_length) {
+            // Apply window and copy with overlap-add
+            for (int i = 0; i < window_size; i++) {
+                for (int ch = 0; ch < num_channels; ch++) {
+                    int in_idx = input_pos + i * num_channels + ch;
                     int out_idx = output_pos + i * num_channels + ch;
                     
-                    if (sample_idx < input_length && out_idx < max_output_length) {
-                        float windowed_sample = input[sample_idx] * hanning_window[i];
-                        output[out_idx] += (short)(windowed_sample * 0.5f);
+                    if (in_idx < input_length && out_idx < max_output_length) {
+                        float sample = input[in_idx] * hanning_window[i] * 0.5f;
+                        output[out_idx] += (short)sample;
                     }
                 }
             }
             
-            input_pos += hop_analysis;
-            output_pos += hop_synthesis;
+            input_pos += analysis_hop;
+            output_pos += synthesis_hop;
         }
     }
     
