@@ -509,47 +509,42 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     int output_pos = 0;
     
     if (speed_factor == 0.5f) {
-        // For 0.5x: copy each grain with 50% overlap to avoid repetition effect
-        int overlap_size = grain_size / 2;  // 50% overlap
+        // For 0.5x: use overlap-add to smoothly extend each grain
+        int hop_size = grain_size / 2;  // Output advance per grain (creates 2x duration)
         
-        while (input_pos + grain_size <= input_length && output_pos + grain_size + overlap_size <= max_output_length) {
-            // Copy grain twice with overlap
-            for (int repeat = 0; repeat < 2; repeat++) {
-                for (int i = 0; i < grain_size; i++) {
-                    for (int ch = 0; ch < num_channels; ch++) {
-                        int in_idx = input_pos + i * num_channels + ch;
-                        int out_idx = output_pos + i * num_channels + ch;
+        // Simple Hanning window for smooth transitions
+        static float fade_window[256];
+        static bool fade_init = false;
+        if (!fade_init || need_reset_static_vars) {
+            for (int i = 0; i < grain_size; i++) {
+                fade_window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (grain_size - 1)));
+            }
+            fade_init = true;
+        }
+        
+        while (input_pos + grain_size <= input_length && output_pos + hop_size <= max_output_length) {
+            // Apply grain with window and overlap-add
+            for (int i = 0; i < grain_size; i++) {
+                for (int ch = 0; ch < num_channels; ch++) {
+                    int in_idx = input_pos + i * num_channels + ch;
+                    int out_idx = output_pos + i * num_channels + ch;
+                    
+                    if (in_idx < input_length && out_idx < max_output_length) {
+                        float windowed_sample = input[in_idx] * fade_window[i];
                         
-                        if (in_idx < input_length && out_idx < max_output_length) {
-                            if (repeat == 0) {
-                                // First copy: full strength
-                                output[out_idx] = input[in_idx];
-                            } else {
-                                // Second copy: blend with existing in overlap region
-                                if (i < overlap_size) {
-                                    // Overlap region: blend with previous
-                                    float blend = (float)i / overlap_size;
-                                    float new_sample = input[in_idx];
-                                    float existing = output[out_idx];
-                                    output[out_idx] = (short)(existing * (1.0f - blend) + new_sample * blend);
-                                } else {
-                                    // Non-overlap region: just copy
-                                    output[out_idx] = input[in_idx];
-                                }
-                            }
-                        }
+                        // Add to output (overlap-add)
+                        output[out_idx] += (short)(windowed_sample * 0.5f);
+                        
+                        // Prevent overflow
+                        if (output[out_idx] > 32767) output[out_idx] = 32767;
+                        if (output[out_idx] < -32768) output[out_idx] = -32768;
                     }
                 }
-                
-                if (repeat == 0) {
-                    // Move output position by overlap amount for second grain
-                    output_pos += overlap_size * num_channels;
-                } else {
-                    // Move to next position after second grain
-                    output_pos += (grain_size - overlap_size) * num_channels;
-                }
             }
+            
+            // For 0.5x speed: advance input by grain_size, output by hop_size (half)
             input_pos += grain_size * num_channels;
+            output_pos += hop_size * num_channels;
         }
     } else if (speed_factor == 1.5f) {
         // For 1.5x: copy 2 grains out of every 3
