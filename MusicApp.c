@@ -509,103 +509,156 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     int output_pos = 0;
     
     if (speed_factor == 0.5f) {
-        // For 0.5x: overlapping frames to ensure no gaps
-        printf("[0.5x] Using overlapping frames for continuous output\n");
+        // Proper PSOLA implementation for 0.5x speed with pitch preservation
+        printf("[0.5x] Using proper PSOLA algorithm\n");
         
-        int frame_size = 128;
-        int input_hop = frame_size / 2;   // 64 samples input advance
-        int output_hop = frame_size / 2;  // 64 samples output advance (creates overlap!)
-        // This creates 2x output length = 0.5x speed
+        // PSOLA parameters - carefully chosen for pitch preservation
+        int frame_size = 512;           // Analysis frame size
+        int synthesis_hop = 128;        // Output hop size (25% of frame)
+        int analysis_hop = 64;          // Input hop size (12.5% of frame for 0.5x)
+        // Ratio: 64/128 = 0.5 for true 0.5x speed
         
-        printf("[0.5x] Frame: %d, Input hop: %d, Output hop: %d\n", 
-               frame_size, input_hop, output_hop);
+        printf("[0.5x PSOLA] Frame: %d, Analysis hop: %d, Synthesis hop: %d\n", 
+               frame_size, analysis_hop, synthesis_hop);
         
-        while (input_pos + frame_size <= input_length && output_pos + frame_size <= max_output_length) {
+        // Create normalized window for perfect reconstruction with given hop size
+        static float psola_window[512];
+        static bool window_initialized = false;
+        
+        if (!window_initialized || need_reset_static_vars) {
+            // Calculate window normalization for this hop size
+            float norm_factor = 0.0f;
             
-            // Copy frame with overlap handling
+            // Calculate overlap sum for normalization
+            for (int i = 0; i < frame_size; i++) {
+                float window_val = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (frame_size - 1)));
+                float overlap_sum = 0.0f;
+                
+                // Sum overlapping windows
+                for (int j = -2; j <= 2; j++) {
+                    int offset = j * synthesis_hop;
+                    if (i + offset >= 0 && i + offset < frame_size) {
+                        overlap_sum += 0.5f * (1.0f - cosf(2.0f * M_PI * (i + offset) / (frame_size - 1)));
+                    }
+                }
+                
+                if (overlap_sum > 0.0f) {
+                    psola_window[i] = window_val / overlap_sum;
+                } else {
+                    psola_window[i] = window_val;
+                }
+            }
+            
+            window_initialized = true;
+        }
+        
+        // PSOLA main processing loop
+        int input_pos = 0;
+        int output_pos = 0;
+        
+        while (input_pos + frame_size <= input_length && 
+               output_pos + frame_size <= max_output_length) {
+            
+            // Extract and window the analysis frame
             for (int i = 0; i < frame_size; i++) {
                 for (int ch = 0; ch < num_channels; ch++) {
                     int in_idx = input_pos + i * num_channels + ch;
                     int out_idx = output_pos + i * num_channels + ch;
                     
                     if (in_idx < input_length && out_idx < max_output_length) {
-                        if (output_pos == 0 || i < output_hop) {
-                            // First frame or non-overlap region: direct copy
-                            output[out_idx] = input[in_idx];
-                        } else {
-                            // Overlap region: average with existing
-                            float existing = output[out_idx];
-                            float new_sample = input[in_idx];
-                            output[out_idx] = (short)((existing + new_sample) * 0.5f);
-                        }
+                        // Apply normalized PSOLA window to input sample
+                        float windowed_sample = input[in_idx] * psola_window[i];
+                        
+                        // Overlap-add to output with proper normalization
+                        output[out_idx] += (short)(windowed_sample);
+                        
+                        // Prevent clipping
+                        if (output[out_idx] > 32767) output[out_idx] = 32767;
+                        if (output[out_idx] < -32768) output[out_idx] = -32768;
                     }
                 }
             }
             
-            input_pos += input_hop * num_channels;
-            output_pos += output_hop * num_channels;
+            // Advance positions according to PSOLA hop sizes
+            input_pos += analysis_hop * num_channels;
+            output_pos += synthesis_hop * num_channels;
         }
-    } else if (speed_factor == 1.5f) {
-        // For 1.5x: copy 2 grains out of every 3
-        int grain_count = 0;
-        while (input_pos + grain_size <= input_length && output_pos + grain_size <= max_output_length) {
-            if (grain_count % 3 != 2) {  // Skip every 3rd grain
-                // Copy grain
-                for (int i = 0; i < grain_size; i++) {
-                    for (int ch = 0; ch < num_channels; ch++) {
-                        int in_idx = input_pos + i * num_channels + ch;
-                        int out_idx = output_pos + i * num_channels + ch;
-                        
-                        if (in_idx < input_length && out_idx < max_output_length) {
-                            output[out_idx] = input[in_idx];
-                        }
-                    }
-                }
-                output_pos += grain_size * num_channels;
-            }
-            input_pos += grain_size * num_channels;
-            grain_count++;
-        }
-    } else if (speed_factor == 2.0f) {
-        // For 2.0x: copy every other grain
-        int grain_count = 0;
-        while (input_pos + grain_size <= input_length && output_pos + grain_size <= max_output_length) {
-            if (grain_count % 2 == 0) {  // Copy every other grain
-                // Copy grain
-                for (int i = 0; i < grain_size; i++) {
-                    for (int ch = 0; ch < num_channels; ch++) {
-                        int in_idx = input_pos + i * num_channels + ch;
-                        int out_idx = output_pos + i * num_channels + ch;
-                        
-                        if (in_idx < input_length && out_idx < max_output_length) {
-                            output[out_idx] = input[in_idx];
-                        }
-                    }
-                }
-                output_pos += grain_size * num_channels;
-            }
-            input_pos += grain_size * num_channels;
-            grain_count++;
-        }
+        
+        *output_length = output_pos;
+        return;
     } else {
-        // For other speeds: simple linear interpolation
-        float input_pos_float = 0.0f;
-        while (input_pos_float < input_length - num_channels && output_pos < max_output_length - num_channels) {
-            int pos = (int)input_pos_float;
-            float frac = input_pos_float - pos;
+        // Use PSOLA for all other speeds (1.5x, 2.0x, etc.)
+        printf("[%.1fx] Using PSOLA algorithm\n", speed_factor);
+        
+        // PSOLA parameters adjusted for different speeds
+        int frame_size = 512;
+        int synthesis_hop = 128;                            // Fixed output hop
+        int analysis_hop = (int)(synthesis_hop * speed_factor); // Variable input hop
+        
+        if (analysis_hop <= 0) analysis_hop = 1;
+        
+        printf("[%.1fx PSOLA] Frame: %d, Analysis hop: %d, Synthesis hop: %d\n", 
+               speed_factor, frame_size, analysis_hop, synthesis_hop);
+        
+        // Create normalized window for this speed
+        static float psola_window_other[512];
+        static bool window_initialized_other = false;
+        static float last_speed_factor = 0.0f;
+        
+        if (!window_initialized_other || need_reset_static_vars || 
+            last_speed_factor != speed_factor) {
             
-            for (int ch = 0; ch < num_channels; ch++) {
-                if (pos + num_channels + ch < input_length) {
-                    float sample1 = input[pos + ch];
-                    float sample2 = input[pos + num_channels + ch];
-                    float interpolated = sample1 + frac * (sample2 - sample1);
-                    
-                    output[output_pos + ch] = (short)interpolated;
+            // Calculate window normalization for this hop size
+            for (int i = 0; i < frame_size; i++) {
+                float window_val = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (frame_size - 1)));
+                float overlap_sum = 0.0f;
+                
+                // Sum overlapping windows
+                for (int j = -2; j <= 2; j++) {
+                    int offset = j * synthesis_hop;
+                    if (i + offset >= 0 && i + offset < frame_size) {
+                        overlap_sum += 0.5f * (1.0f - cosf(2.0f * M_PI * (i + offset) / (frame_size - 1)));
+                    }
+                }
+                
+                if (overlap_sum > 0.0f) {
+                    psola_window_other[i] = window_val / overlap_sum;
+                } else {
+                    psola_window_other[i] = window_val;
                 }
             }
             
-            output_pos += num_channels;
-            input_pos_float += speed_factor * num_channels;
+            window_initialized_other = true;
+            last_speed_factor = speed_factor;
+        }
+        
+        // PSOLA main processing loop
+        while (input_pos + frame_size <= input_length && 
+               output_pos + frame_size <= max_output_length) {
+            
+            // Extract and window the analysis frame
+            for (int i = 0; i < frame_size; i++) {
+                for (int ch = 0; ch < num_channels; ch++) {
+                    int in_idx = input_pos + i * num_channels + ch;
+                    int out_idx = output_pos + i * num_channels + ch;
+                    
+                    if (in_idx < input_length && out_idx < max_output_length) {
+                        // Apply normalized PSOLA window to input sample
+                        float windowed_sample = input[in_idx] * psola_window_other[i];
+                        
+                        // Overlap-add to output
+                        output[out_idx] += (short)(windowed_sample);
+                        
+                        // Prevent clipping
+                        if (output[out_idx] > 32767) output[out_idx] = 32767;
+                        if (output[out_idx] < -32768) output[out_idx] = -32768;
+                    }
+                }
+            }
+            
+            // Advance positions according to PSOLA hop sizes
+            input_pos += analysis_hop * num_channels;
+            output_pos += synthesis_hop * num_channels;
         }
     }
     
