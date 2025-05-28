@@ -499,58 +499,96 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
         output[i] = 0;
     }
     
-    // PSOLA parameters - adaptive to speed
-    int grain_size = 512;  // Fixed grain size for pitch preservation
-    int overlap_size = grain_size / 4;  // 25% overlap
+    // Simple granular synthesis with fixed parameters
+    int grain_size = 256;  // Smaller grains for less artifacts
     
-    // Calculate hop sizes for time stretching
-    int input_hop = overlap_size;  // How much input we advance each time
-    int output_hop = (int)(overlap_size / speed_factor);  // How much output we advance
+    printf("[%.1fx] Using simple granular synthesis, grain size: %d\n", speed_factor, grain_size);
     
-    if (output_hop <= 0) output_hop = 1;
-    
-    printf("[%.1fx] Grain: %d, Overlap: %d, Input hop: %d, Output hop: %d\n", 
-           speed_factor, grain_size, overlap_size, input_hop, output_hop);
-    
-    // Create Hanning window
-    static float window[512];
-    static bool window_init = false;
-    if (!window_init || need_reset_static_vars) {
-        for (int i = 0; i < grain_size; i++) {
-            window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (grain_size - 1)));
-        }
-        window_init = true;
-    }
-    
+    // Simple approach based on speed factor
     int input_pos = 0;
     int output_pos = 0;
     
-    // PSOLA main loop
-    while (input_pos + grain_size <= input_length && output_pos < max_output_length) {
-        
-        // Apply grain with overlap-add
-        for (int i = 0; i < grain_size; i++) {
+    if (speed_factor == 0.5f) {
+        // For 0.5x: copy each grain twice
+        while (input_pos + grain_size <= input_length && output_pos + 2 * grain_size <= max_output_length) {
+            // Copy grain twice
+            for (int repeat = 0; repeat < 2; repeat++) {
+                for (int i = 0; i < grain_size; i++) {
+                    for (int ch = 0; ch < num_channels; ch++) {
+                        int in_idx = input_pos + i * num_channels + ch;
+                        int out_idx = output_pos + i * num_channels + ch;
+                        
+                        if (in_idx < input_length && out_idx < max_output_length) {
+                            output[out_idx] = input[in_idx];
+                        }
+                    }
+                }
+                output_pos += grain_size * num_channels;
+            }
+            input_pos += grain_size * num_channels;
+        }
+    } else if (speed_factor == 1.5f) {
+        // For 1.5x: copy 2 grains out of every 3
+        int grain_count = 0;
+        while (input_pos + grain_size <= input_length && output_pos + grain_size <= max_output_length) {
+            if (grain_count % 3 != 2) {  // Skip every 3rd grain
+                // Copy grain
+                for (int i = 0; i < grain_size; i++) {
+                    for (int ch = 0; ch < num_channels; ch++) {
+                        int in_idx = input_pos + i * num_channels + ch;
+                        int out_idx = output_pos + i * num_channels + ch;
+                        
+                        if (in_idx < input_length && out_idx < max_output_length) {
+                            output[out_idx] = input[in_idx];
+                        }
+                    }
+                }
+                output_pos += grain_size * num_channels;
+            }
+            input_pos += grain_size * num_channels;
+            grain_count++;
+        }
+    } else if (speed_factor == 2.0f) {
+        // For 2.0x: copy every other grain
+        int grain_count = 0;
+        while (input_pos + grain_size <= input_length && output_pos + grain_size <= max_output_length) {
+            if (grain_count % 2 == 0) {  // Copy every other grain
+                // Copy grain
+                for (int i = 0; i < grain_size; i++) {
+                    for (int ch = 0; ch < num_channels; ch++) {
+                        int in_idx = input_pos + i * num_channels + ch;
+                        int out_idx = output_pos + i * num_channels + ch;
+                        
+                        if (in_idx < input_length && out_idx < max_output_length) {
+                            output[out_idx] = input[in_idx];
+                        }
+                    }
+                }
+                output_pos += grain_size * num_channels;
+            }
+            input_pos += grain_size * num_channels;
+            grain_count++;
+        }
+    } else {
+        // For other speeds: simple linear interpolation
+        float input_pos_float = 0.0f;
+        while (input_pos_float < input_length - num_channels && output_pos < max_output_length - num_channels) {
+            int pos = (int)input_pos_float;
+            float frac = input_pos_float - pos;
+            
             for (int ch = 0; ch < num_channels; ch++) {
-                int in_idx = input_pos + i * num_channels + ch;
-                int out_idx = output_pos + i * num_channels + ch;
-                
-                if (in_idx < input_length && out_idx < max_output_length) {
-                    // Apply window and add to output
-                    float windowed_sample = input[in_idx] * window[i];
+                if (pos + num_channels + ch < input_length) {
+                    float sample1 = input[pos + ch];
+                    float sample2 = input[pos + num_channels + ch];
+                    float interpolated = sample1 + frac * (sample2 - sample1);
                     
-                    // Overlap-add with proper scaling
-                    output[out_idx] += (short)(windowed_sample * 0.5f);
-                    
-                    // Prevent overflow
-                    if (output[out_idx] > 32767) output[out_idx] = 32767;
-                    if (output[out_idx] < -32768) output[out_idx] = -32768;
+                    output[output_pos + ch] = (short)interpolated;
                 }
             }
+            
+            output_pos += num_channels;
+            input_pos_float += speed_factor * num_channels;
         }
-        
-        // Advance positions
-        input_pos += input_hop * num_channels;
-        output_pos += output_hop * num_channels;
     }
     
     *output_length = output_pos;
