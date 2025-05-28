@@ -527,161 +527,120 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
     }
     
     if (speed_factor == 0.5f) {
-        // Adaptive parameters based on sample rate
+        // Two-stage approach for pitch preservation:
+        // Stage 1: Time stretch to 2x length (using SOLA)
+        // Stage 2: Resample by 2x to restore pitch
+        
         int sample_rate = wav_header.sample_rate;
         
-        // For very low sample rates or mono, use simple sample duplication
-        if (sample_rate <= 16000 || num_channels == 1) {
-            // Simple sample duplication for 0.5x speed
-            int out_idx = 0;
-            for (int in_idx = 0; in_idx < input_length && out_idx < max_output_length - 1; in_idx++) {
-                output[out_idx++] = input[in_idx];
-                output[out_idx++] = input[in_idx];
-            }
-            *output_length = out_idx;
-            return;
+        // Debug output
+        static bool debug_printed_simple = false;
+        if (!debug_printed_simple || need_reset_static_vars) {
+            printf("[0.5x Pitch-Preserving] Sample Rate: %d Hz, Channels: %d\n", sample_rate, num_channels);
+            printf("[0.5x Pitch-Preserving] Using time stretch + resampling\n");
+            debug_printed_simple = true;
         }
         
-        // Target frame duration: 20-30ms for good quality
-        // Adjust frame size based on sample rate
-        int frame_size = (sample_rate * 20) / 1000;  // 20ms frame
-        // Round to nearest power of 2 for efficiency
-        if (frame_size <= 256) frame_size = 256;
-        else if (frame_size <= 512) frame_size = 512;
-        else if (frame_size <= 1024) frame_size = 1024;
-        else frame_size = 2048;
+        // State preservation for streaming
+        static short overlap_buffer[4096] = {0};
+        static int overlap_size = 0;
+        static bool first_buffer = true;
         
-        int analysis_hop = frame_size / 4;      // 25% hop for input
-        int synthesis_hop = analysis_hop * 2;   // 2x for 0.5x speed
-        int overlap_size = frame_size / 2;      // 50% overlap
-        int search_range = analysis_hop / 2;    // Search ±50% of hop size
-        
-        // Debug output (only print once)
-        static bool debug_printed = false;
-        if (!debug_printed && need_reset_static_vars) {
-            printf("[0.5x Time Stretch] Sample Rate: %d Hz, Channels: %d\n", sample_rate, num_channels);
-            printf("[0.5x Time Stretch] Frame Size: %d, Analysis Hop: %d, Synthesis Hop: %d\n", 
-                   frame_size, analysis_hop, synthesis_hop);
-            printf("[0.5x Time Stretch] Frame duration: %.1f ms\n", 
-                   (float)frame_size * 1000.0f / sample_rate);
-            debug_printed = true;
-        }
-        
-        // Static buffers for state preservation between calls
-        static float overlap_buffer[4096] = {0};  // Max size for up to 48kHz stereo
-        static int overlap_valid_samples = 0;
-        static bool first_frame = true;
-        static int last_frame_size = 0;
-        
-        // Reset on file change or frame size change
-        if (need_reset_static_vars || last_frame_size != frame_size) {
+        if (need_reset_static_vars) {
+            overlap_size = 0;
+            first_buffer = true;
             for (int i = 0; i < 4096; i++) overlap_buffer[i] = 0;
-            overlap_valid_samples = 0;
-            first_frame = true;
-            window_init_0_5x = false;  // Force window recalculation
-            last_frame_size = frame_size;
         }
         
-        // Create fade in/out windows for overlap region only
-        static float fade_in[2048];   // Max overlap size
-        static float fade_out[2048];
+        // Allocate intermediate buffer for stretched audio
+        static short stretch_buffer[AUDIO_BUFFER_SIZE * 4];
+        int stretch_length = 0;
         
-        if (!window_init_0_5x) {
-            for (int i = 0; i < overlap_size; i++) {
-                // Use raised cosine window for smoother transitions
-                float t = (float)i / (overlap_size - 1);
-                fade_in[i] = 0.5f * (1.0f - cosf(M_PI * t));
-                fade_out[i] = 0.5f * (1.0f + cosf(M_PI * t));
-            }
-            window_init_0_5x = true;
+        // Stage 1: SOLA time stretching (2x length, no pitch change)
+        // Parameters based on sample rate
+        int window_ms = 20;  // 20ms windows
+        int window_size = (sample_rate * window_ms) / 1000;
+        if (window_size > 2048) window_size = 2048;
+        if (window_size < 256) window_size = 256;  // Minimum size
+        
+        int analysis_hop = window_size / 4;   // 75% overlap
+        int synthesis_hop = analysis_hop * 2; // 2x stretch
+        
+        if (debug_printed_simple && need_reset_static_vars) {
+            printf("[0.5x] Window size: %d samples (%.1f ms)\n", 
+                   window_size, (float)window_size * 1000.0f / sample_rate);
+            printf("[0.5x] Analysis hop: %d, Synthesis hop: %d\n", 
+                   analysis_hop, synthesis_hop);
         }
         
-        while (input_pos + frame_size < input_length && output_pos + synthesis_hop < max_output_length) {
-            int best_match_pos = input_pos;
-            
-            // For first frame or when no overlap exists, just use current position
-            if (!first_frame && overlap_valid_samples > 0) {
-                float max_correlation = -1.0f;
-                
-                // WSOLA: Find best matching position
-                for (int offset = -search_range; offset <= search_range; offset++) {
-                    int candidate_pos = input_pos + offset;
-                    
-                    if (candidate_pos < 0 || candidate_pos + overlap_size >= input_length) {
-                        continue;
-                    }
-                    
-                    // Calculate correlation with overlap buffer
-                    float correlation = 0.0f;
-                    float overlap_energy = 0.0f;
-                    float candidate_energy = 0.0f;
-                    
-                    for (int i = 0; i < overlap_size; i++) {
-                        for (int ch = 0; ch < num_channels; ch++) {
-                            int buf_idx = i * num_channels + ch;
-                            int cand_idx = candidate_pos + i * num_channels + ch;
-                            
-                            if (buf_idx < overlap_valid_samples && cand_idx < input_length) {
-                                float overlap_sample = overlap_buffer[buf_idx];
-                                float candidate_sample = (float)input[cand_idx];
-                                
-                                correlation += overlap_sample * candidate_sample;
-                                overlap_energy += overlap_sample * overlap_sample;
-                                candidate_energy += candidate_sample * candidate_sample;
-                            }
-                        }
-                    }
-                    
-                    if (overlap_energy > 0.0f && candidate_energy > 0.0f) {
-                        float norm_corr = correlation / sqrtf(overlap_energy * candidate_energy);
-                        if (norm_corr > max_correlation) {
-                            max_correlation = norm_corr;
-                            best_match_pos = candidate_pos;
-                        }
-                    }
-                }
+        // Create Hanning window
+        static float window[2048];
+        static int last_window_size = 0;
+        if (last_window_size != window_size) {
+            for (int i = 0; i < window_size; i++) {
+                window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (window_size - 1)));
             }
+            last_window_size = window_size;
+        }
+        
+        // Clear stretch buffer
+        for (int i = 0; i < AUDIO_BUFFER_SIZE * 4; i++) {
+            stretch_buffer[i] = 0;
+        }
+        
+        // SOLA processing
+        int input_pos = 0;
+        int stretch_pos = 0;
+        
+        while (input_pos + window_size <= input_length && 
+               stretch_pos + synthesis_hop < AUDIO_BUFFER_SIZE * 4) {
             
-            // Copy frame to output with overlap-add
-            for (int i = 0; i < synthesis_hop; i++) {
+            // Apply window and copy to stretch buffer with overlap-add
+            for (int i = 0; i < window_size; i++) {
                 for (int ch = 0; ch < num_channels; ch++) {
-                    int in_idx = best_match_pos + i * num_channels + ch;
-                    int out_idx = output_pos + i * num_channels + ch;
+                    int in_idx = input_pos + i * num_channels + ch;
+                    int out_idx = stretch_pos + i * num_channels + ch;
                     
-                    if (in_idx < input_length && out_idx < max_output_length) {
-                        float sample = (float)input[in_idx];
-                        
-                        // Apply overlap-add only in overlap region
-                        if (i < overlap_size && !first_frame && overlap_valid_samples > 0) {
-                            int buf_idx = i * num_channels + ch;
-                            if (buf_idx < overlap_valid_samples) {
-                                // Crossfade between overlap buffer and new sample
-                                sample = overlap_buffer[buf_idx] * fade_out[i] + sample * fade_in[i];
-                            }
-                        }
-                        
-                        // Clamp and output
-                        if (sample > 32767.0f) sample = 32767.0f;
-                        if (sample < -32768.0f) sample = -32768.0f;
-                        output[out_idx] = (short)sample;
+                    if (in_idx < input_length && out_idx < AUDIO_BUFFER_SIZE * 4) {
+                        float sample = input[in_idx] * window[i];
+                        stretch_buffer[out_idx] += (short)(sample * 0.5f); // Scale for overlap-add
                     }
                 }
             }
             
-            // Save the end of current frame for next overlap
-            overlap_valid_samples = 0;
-            for (int i = 0; i < overlap_size; i++) {
-                for (int ch = 0; ch < num_channels; ch++) {
-                    int in_idx = best_match_pos + (synthesis_hop - overlap_size + i) * num_channels + ch;
-                    if (in_idx < input_length) {
-                        overlap_buffer[overlap_valid_samples++] = (float)input[in_idx];
-                    }
-                }
-            }
-            
-            first_frame = false;
-            output_pos += synthesis_hop;
             input_pos += analysis_hop;
+            stretch_pos += synthesis_hop;
+        }
+        
+        stretch_length = stretch_pos;
+        
+        // Stage 2: Resample stretched audio by 2x (decimate)
+        // Using proper anti-aliasing filter before decimation
+        
+        // Simple 4-tap anti-aliasing filter coefficients
+        const float aa_filter[4] = {0.125f, 0.375f, 0.375f, 0.125f};
+        
+        int output_pos = 0;
+        
+        // Process with anti-aliasing filter and decimate by 2
+        for (int i = 0; i < stretch_length - 4 * num_channels && 
+             output_pos < max_output_length; i += 2 * num_channels) {
+            
+            for (int ch = 0; ch < num_channels; ch++) {
+                // Apply anti-aliasing filter
+                float filtered = 0.0f;
+                for (int j = 0; j < 4; j++) {
+                    int idx = i + j * num_channels + ch;
+                    if (idx < stretch_length) {
+                        filtered += stretch_buffer[idx] * aa_filter[j];
+                    }
+                }
+                
+                // Clamp and output
+                if (filtered > 32767.0f) filtered = 32767.0f;
+                if (filtered < -32768.0f) filtered = -32768.0f;
+                output[output_pos++] = (short)filtered;
+            }
         }
         
         *output_length = output_pos;
