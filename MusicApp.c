@@ -529,7 +529,7 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
         int hop_analysis = 256;  // Input hop size
         int hop_synthesis = 512; // Output hop size (2x for 0.5x speed)
         
-        static float prev_phase[512] = {0}; // Store previous phases
+        static float prev_phase[513] = {0}; // Store previous phases (fft_size/2 + 1)
         
         // Reset phase tracking on file change
         if (!phase_vocoder_init) {
@@ -581,7 +581,7 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
             // Phase unwrapping and interpolation for time-stretching
             float time_stretch_ratio = (float)hop_synthesis / hop_analysis;
             
-            for (int k = 0; k < fft_size/2; k++) {
+            for (int k = 0; k < fft_size/2 + 1; k++) {
                 if (output_pos > 0) { // Skip first frame
                     // Calculate expected phase increment
                     float expected_phase_inc = 2.0f * M_PI * k * hop_analysis / fft_size;
@@ -589,14 +589,14 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
                     // Calculate actual phase difference
                     float phase_diff = phase[k] - prev_phase[k];
                     
-                    // Phase unwrapping
+                    // Phase unwrapping - handle 2π discontinuities
                     while (phase_diff > M_PI) phase_diff -= 2.0f * M_PI;
                     while (phase_diff < -M_PI) phase_diff += 2.0f * M_PI;
                     
                     // Calculate instantaneous frequency
                     float inst_freq = expected_phase_inc + phase_diff;
                     
-                    // Modify phase for time-stretching
+                    // Update accumulated phase for synthesis
                     prev_phase[k] += inst_freq * time_stretch_ratio;
                     
                     // Use modified phase
@@ -604,40 +604,53 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
                 } else {
                     prev_phase[k] = phase[k];
                 }
-                
-                // Reconstruct complex spectrum
-                fft_buffer[k] = complex_from_polar(magnitude[k], phase[k]);
-                // Mirror for negative frequencies
-                if (k > 0 && k < fft_size/2) {
-                    fft_buffer[fft_size - k].real = fft_buffer[k].real;
-                    fft_buffer[fft_size - k].imag = -fft_buffer[k].imag;
+            }
+            
+            // Reconstruct full spectrum with proper symmetry
+            for (int k = 0; k < fft_size; k++) {
+                if (k <= fft_size/2) {
+                    // Positive frequencies (including DC and Nyquist)
+                    fft_buffer[k] = complex_from_polar(magnitude[k], phase[k]);
+                } else {
+                    // Negative frequencies - complex conjugate of positive frequencies
+                    int mirror_k = fft_size - k;
+                    fft_buffer[k].real = fft_buffer[mirror_k].real;
+                    fft_buffer[k].imag = -fft_buffer[mirror_k].imag;
                 }
+            }
+            
+            // Handle DC and Nyquist bins specially (must be real)
+            fft_buffer[0].imag = 0.0f;
+            if (fft_size % 2 == 0) {
+                fft_buffer[fft_size/2].imag = 0.0f;
             }
             
             // Inverse FFT
             ifft(fft_buffer, fft_size);
             
-            // Overlap-add to output with windowing
+            // Proper overlap-add synthesis with window normalization
             for (int i = 0; i < fft_size; i++) {
-                for (int ch = 0; ch < num_channels; ch++) {
-                    int out_idx = output_pos + i * num_channels + ch;
-                    if (out_idx < max_output_length) {
-                        float sample = fft_buffer[i].real * window[i];
+                int out_idx = output_pos + i * num_channels;
+                if (out_idx + num_channels <= max_output_length) {
+                    // Apply synthesis window and normalize for overlap-add
+                    float windowed_sample = fft_buffer[i].real * window[i];
+                    
+                    // Normalize by expected window overlap
+                    // For 50% overlap with Hanning window, normalization factor ≈ 1.5
+                    windowed_sample *= 1.5f;
+                    
+                    // Apply to all channels
+                    for (int ch = 0; ch < num_channels; ch++) {
+                        int sample_idx = out_idx + ch;
                         
-                        if (ch == 0) {
-                            // Process first channel with phase vocoder
-                            output[out_idx] += (short)(sample * 0.5f); // Scale down for overlap-add
-                        } else {
-                            // Copy first channel to other channels (simple stereo handling)
-                            int first_ch_idx = output_pos + i * num_channels;
-                            if (first_ch_idx < max_output_length) {
-                                output[out_idx] = output[first_ch_idx];
-                            }
-                        }
+                        // Overlap-add accumulation
+                        float accumulated = (float)output[sample_idx] + windowed_sample;
                         
-                        // Prevent overflow
-                        if (output[out_idx] > 32767) output[out_idx] = 32767;
-                        if (output[out_idx] < -32768) output[out_idx] = -32768;
+                        // Clamp to prevent overflow
+                        if (accumulated > 32767.0f) accumulated = 32767.0f;
+                        if (accumulated < -32768.0f) accumulated = -32768.0f;
+                        
+                        output[sample_idx] = (short)accumulated;
                     }
                 }
             }
