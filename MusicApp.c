@@ -574,70 +574,60 @@ void apply_time_stretch(short* input, short* output, int input_length, int* outp
         *output_length = output_pos;
         return;
     } else {
-        // For 1.5x and 2.0x speeds - pitch-preserving time stretch
-        int sample_rate = wav_header.sample_rate;
+        // For 1.5x and 2.0x speeds - simple frame repeat/skip for pitch preservation
         
         // Debug output for other speeds
         static bool debug_printed_other = false;
         if (!debug_printed_other || need_reset_static_vars) {
-            printf("[%.1fx Pitch-Preserving] Sample Rate: %d Hz, Channels: %d\n", 
-                   speed_factor, sample_rate, num_channels);
+            printf("[%.1fx Pitch-Preserving] Using frame repeat/skip method\n", speed_factor);
             debug_printed_other = true;
         }
         
-        // WSOLA parameters for pitch preservation
-        int window_size = 512;  // Fixed window size for simplicity
-        int synthesis_hop = window_size / 4;  // Fixed output hop (25% overlap)
-        int analysis_hop = (int)(synthesis_hop / speed_factor);  // Input hop for time stretch
+        // Simple approach: 
+        // For 1.5x: process 3 frames, output 2 frames (skip every 3rd)
+        // For 2.0x: process 2 frames, output 1 frame (skip every 2nd)
         
-        if (analysis_hop <= 0) analysis_hop = 1;
+        int frame_size = 128;  // Small frames to minimize artifacts
+        int frames_to_process, frames_to_output;
         
-        printf("[%.1fx] Window: %d, Analysis hop: %d, Synthesis hop: %d\n", 
-               speed_factor, window_size, analysis_hop, synthesis_hop);
-        
-        // Create Hanning window
-        static float window[512];
-        static bool window_initialized = false;
-        if (!window_initialized || need_reset_static_vars) {
-            for (int i = 0; i < window_size; i++) {
-                window[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (window_size - 1)));
-            }
-            window_initialized = true;
+        if (speed_factor == 1.5f) {
+            frames_to_process = 3;
+            frames_to_output = 2;
+        } else if (speed_factor == 2.0f) {
+            frames_to_process = 2;
+            frames_to_output = 1;
+        } else {
+            // Fallback for other speeds
+            frames_to_process = 4;
+            frames_to_output = (int)(4 / speed_factor);
+            if (frames_to_output <= 0) frames_to_output = 1;
         }
         
-        // Simple WSOLA without correlation (for continuous signals like sine waves)
+        printf("[%.1fx] Frame size: %d, Process: %d frames, Output: %d frames\n", 
+               speed_factor, frame_size, frames_to_process, frames_to_output);
+        
         int input_pos = 0;
         int output_pos = 0;
         
-        while (input_pos + window_size <= input_length && 
-               output_pos + synthesis_hop <= max_output_length) {
+        while (input_pos + frames_to_process * frame_size <= input_length && 
+               output_pos + frames_to_output * frame_size <= max_output_length) {
             
-            // Apply windowed samples to output with proper scaling
-            for (int i = 0; i < window_size; i++) {
-                for (int ch = 0; ch < num_channels; ch++) {
-                    int in_idx = input_pos + i * num_channels + ch;
-                    int out_idx = output_pos + i * num_channels + ch;
-                    
-                    if (in_idx < input_length && out_idx < max_output_length) {
-                        // Apply window and scale for overlap-add
-                        float sample = input[in_idx] * window[i];
+            // Copy the first N frames (skip the rest)
+            for (int frame = 0; frame < frames_to_output; frame++) {
+                for (int i = 0; i < frame_size; i++) {
+                    for (int ch = 0; ch < num_channels; ch++) {
+                        int in_idx = input_pos + frame * frame_size * num_channels + i * num_channels + ch;
+                        int out_idx = output_pos + frame * frame_size * num_channels + i * num_channels + ch;
                         
-                        // Use simple addition instead of +=, with proper normalization
-                        if (i < synthesis_hop || output_pos == 0) {
-                            // First part of window or first frame
-                            output[out_idx] = (short)(sample);
-                        } else {
-                            // Overlap region - blend with existing
-                            float existing = output[out_idx];
-                            float overlap_factor = (float)(i - synthesis_hop) / (window_size - synthesis_hop);
-                            output[out_idx] = (short)(existing * (1.0f - overlap_factor) + sample * overlap_factor);
+                        if (in_idx < input_length && out_idx < max_output_length) {
+                            output[out_idx] = input[in_idx];
                         }
                     }
                 }
             }
             
-            input_pos += analysis_hop;
-            output_pos += synthesis_hop;
+            input_pos += frames_to_process * frame_size * num_channels;
+            output_pos += frames_to_output * frame_size * num_channels;
         }
         
         *output_length = output_pos;
