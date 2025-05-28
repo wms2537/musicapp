@@ -1127,37 +1127,28 @@ restart_playback:
         log_user_operation("AUTO_NEXT_TRACK", "SUCCESS");
         printf("自动切换到下一首: %s\n", playlist[current_track]);
         
-        // 清理当前缓冲区
-        if (filtered_buff) {
-            free(filtered_buff);
-            filtered_buff = NULL;
-        }
-        if (temp_samples) {
-            free(temp_samples);
-            temp_samples = NULL;
-        }
-        
         fclose(fp);
         if (open_music_file(playlist[current_track])) {
-            // 重新开始播放循环
+            // 重新开始播放循环，buffers will be cleaned up automatically at the end
             goto restart_playback;
         } else {
             printf("ERROR: Failed to open next track: %s\n", playlist[current_track]);
         }
-    } else {
-        printf("DEBUG: Starting buffer cleanup\n");
-        if (filtered_buff) {
-            printf("DEBUG: Freeing filtered_buff\n");
-            free(filtered_buff);
-            filtered_buff = NULL;
-        }
-        if (temp_samples) {
-            printf("DEBUG: Freeing temp_samples\n");
-            free(temp_samples);
-            temp_samples = NULL;
-        }
-        printf("DEBUG: Buffer cleanup completed\n");
     }
+    
+    // 清理缓冲区（只在这里执行一次）
+    printf("DEBUG: Starting buffer cleanup\n");
+    if (filtered_buff) {
+        printf("DEBUG: Freeing filtered_buff\n");
+        free(filtered_buff);
+        filtered_buff = NULL;
+    }
+    if (temp_samples) {
+        printf("DEBUG: Freeing temp_samples\n");
+        free(temp_samples);
+        temp_samples = NULL;
+    }
+    printf("DEBUG: Buffer cleanup completed\n");
 
 playback_end:
     current_state = STOPPED;
